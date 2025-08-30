@@ -9,7 +9,14 @@ from typing import Protocol, runtime_checkable
 
 import libtorrent as lt
 import structlog
-from tqdm import tqdm
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    FileSizeColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+)
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -118,13 +125,9 @@ class DefaultFileReader(AbstractContextManager):
         return fh.read(r.stop - r.start)
 
 
-def parse_torrent(torrent_path: Path):
-    log = logger.bind(method="parse_torrent")
-    log.info("invoked", torrent_path=torrent_path)
-
-    buffer = torrent_path.read_bytes()
+def parse_torrent_buf(buffer: bytes) -> Torrent:
+    """Parse torrent from buffer bytes"""
     info: lt.torrent_info = lt.torrent_info(buffer)
-    log.info("parsed", name=info.name())
 
     fs: lt.file_storage = info.files()
     files: list[File] = []
@@ -142,14 +145,10 @@ def parse_torrent(torrent_path: Path):
             )
         )
 
-    log.info("parsed files", files=files)
-
     trackers: list[Announce] = []
     for tracker in info.trackers():
         typing.cast(lt.announce_entry, tracker)  # fix type hints
         trackers.append(Announce(url=tracker.url, tier=tracker.tier))
-
-    log.info("parsed trackers", trackers=trackers)
 
     return Torrent(
         buffer=buffer,
@@ -161,6 +160,19 @@ def parse_torrent(torrent_path: Path):
         files=files,
         trackers=trackers,
     )
+
+
+def parse_torrent(torrent_path: Path) -> Torrent:
+    log = logger.bind(method="parse_torrent")
+    log.info("invoked", torrent_path=torrent_path)
+
+    buffer = torrent_path.read_bytes()
+    torrent = parse_torrent_buf(buffer)
+    log.info("parsed", name=torrent.info.name())
+    log.info("parsed files", files=torrent.files)
+    log.info("parsed trackers", trackers=torrent.trackers)
+
+    return torrent
 
 
 def _match_files(
@@ -222,14 +234,26 @@ def verify_pieces(
     bad_pc = 0
     bad_sz = 0
     with DefaultFileReader() as reader:
-        with tqdm(
-            total=torrent.sz, unit="B", unit_scale=True, unit_divisor=1024
-        ) as pbar:
+        with Progress(
+            TextColumn("[bold blue]Verifying pieces...", justify="right"),
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>3.1f}%",
+            "•",
+            FileSizeColumn(),
+            "•",
+            TransferSpeedColumn(),
+            "•",
+            TimeRemainingColumn(),
+        ) as progress:
+            task = progress.add_task("verify", total=torrent.sz)
+
             for piece_idx in range(torrent.pc):
                 piece_sz: int = torrent.info.piece_size(piece_idx)
                 piece_offset: int = piece_idx * torrent.info.piece_length()
 
                 buf: bytearray = bytearray()
+                bytes_read_this_piece = 0
+
                 for file, r in torrent.get_piece_refs(piece_offset, piece_sz):
                     file_path = file.path
                     if strip_components:
@@ -239,8 +263,12 @@ def verify_pieces(
                                 f"cannot strip {strip_components} components from path '{file_path}', only has {parts_sz} parts"
                             )
                         file_path = Path(*file_path.parts[strip_components:])
-                    buf.extend(reader.read(save_path / file_path, r))
-                    pbar.update(len(buf))
+
+                    chunk = reader.read(save_path / file_path, r)
+                    buf.extend(chunk)
+                    bytes_read_this_piece += len(chunk)
+
+                progress.update(task, advance=bytes_read_this_piece)
 
                 data: bytes = bytes(buf[:piece_sz])
                 actual_hash: bytes = hashlib.sha1(data).digest()
