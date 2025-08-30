@@ -17,17 +17,19 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
 @click.group(invoke_without_command=True)
 @click.option("-s", "--store", type=str, default=".nx_store")
+@click.option("--max-announce-count", type=int, default=3, help="maximum number of announce urls to show per torrent (0 = show all)")
 @click.pass_context
-def nx(ctx: click.Context, store: str):
+def nx(ctx: click.Context, store: str, max_announce_count: int):
     ctx.ensure_object(dict)
     ctx.obj["store"] = Path(store).absolute()
+    ctx.obj["max_announce_count"] = max_announce_count
     Repo.validate_path(ctx.obj["store"])
 
     if ctx.invoked_subcommand is None:
-        _show_entries(ctx.obj["store"])
+        _show_entries(ctx.obj["store"], max_announce_count)
 
 
-def _show_entries(store_path: Path):
+def _show_entries(store_path: Path, max_announce_count: int):
     """Pretty print all entries in the store"""
     try:
         with Repo(store_path) as repo:
@@ -41,7 +43,7 @@ def _show_entries(store_path: Path):
 
             for entry in repo.store.entries:
                 if isinstance(entry, TorrentEntry):
-                    _print_torrent_entry(entry, prefix_map.get(entry.id, ""))
+                    _print_torrent_entry(entry, prefix_map.get(entry.id, ""), max_announce_count)
     except FileNotFoundError:
         click.echo("no entries found")
 
@@ -74,7 +76,7 @@ def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
     return prefix_map
 
 
-def _print_torrent_entry(entry: TorrentEntry, unique_prefix: str = ""):
+def _print_torrent_entry(entry: TorrentEntry, unique_prefix: str = "", max_announce_count: int = 5):
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
     torrent = parse_torrent_buf(torrent_data)
@@ -96,8 +98,17 @@ def _print_torrent_entry(entry: TorrentEntry, unique_prefix: str = ""):
     # Announce section
     if torrent.trackers:
         announce_branch = torrent_branch.add("[yellow]announce[/yellow]")
-        for tracker in torrent.trackers:
+
+        trackers_to_show = torrent.trackers
+        if max_announce_count > 0:
+            trackers_to_show = torrent.trackers[:max_announce_count]
+
+        for tracker in trackers_to_show:
             announce_branch.add(tracker.url)
+
+        if 0 < max_announce_count < len(torrent.trackers):
+            remaining = len(torrent.trackers) - max_announce_count
+            announce_branch.add(f"[dim]... and {remaining} more[/dim]")
 
     # Files structure
     _add_files_to_tree(torrent_branch, torrent.files)
@@ -216,6 +227,7 @@ def _calculate_dir_size(tree_node: dict) -> int:
             total += _calculate_dir_size(subtree)
 
     return total
+
 
 
 @nx.command()
