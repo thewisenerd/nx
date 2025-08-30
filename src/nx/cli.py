@@ -1,5 +1,5 @@
-import time
 import base64
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -8,9 +8,9 @@ import structlog
 from rich.console import Console
 from rich.tree import Tree
 
-from nx.store import TorrentEntry, Repo
+from nx.store import Repo, TorrentEntry
 
-from .nx import parse_torrent, parse_torrent_buf, Torrent
+from .nx import Torrent, parse_torrent, parse_torrent_buf
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -35,22 +35,60 @@ def _show_entries(store_path: Path):
                 click.echo("no entries found")
                 return
 
+            # Extract all entry IDs for prefix calculation
+            entry_ids = [entry.id for entry in repo.store.entries]
+            prefix_map = _calculate_unique_prefixes(entry_ids)
+
             for entry in repo.store.entries:
                 if isinstance(entry, TorrentEntry):
-                    _print_torrent_entry(entry)
+                    _print_torrent_entry(entry, prefix_map.get(entry.id, ""))
     except FileNotFoundError:
         click.echo("no entries found")
 
 
-def _print_torrent_entry(entry: TorrentEntry):
+def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
+    """Calculate shortest unique prefix for each individual ID"""
+    if not ids:
+        return {}
+
+    prefix_map = {}
+
+    for id_str in ids:
+        # Find the shortest prefix for this specific ID
+        for prefix_len in range(1, len(id_str) + 1):
+            prefix = id_str[:prefix_len]
+            # Check if this prefix uniquely identifies this ID among all others
+            conflicts = [
+                other_id
+                for other_id in ids
+                if other_id != id_str and other_id.startswith(prefix)
+            ]
+            if not conflicts:
+                prefix_map[id_str] = prefix
+                break
+
+        # Fallback to full ID if no unique prefix found
+        if id_str not in prefix_map:
+            prefix_map[id_str] = id_str
+
+    return prefix_map
+
+
+def _print_torrent_entry(entry: TorrentEntry, unique_prefix: str = ""):
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
     torrent = parse_torrent_buf(torrent_data)
 
     console = Console()
 
-    # Root tree with entry ID
-    tree = Tree(f"[bold cyan]{entry.id}[/bold cyan]")
+    # Root tree with entry ID - highlight unique prefix
+    if unique_prefix and len(unique_prefix) < len(entry.id):
+        remaining = entry.id[len(unique_prefix) :]
+        tree = Tree(
+            f"[bright_yellow]{unique_prefix}[/bright_yellow][dim grey]{remaining}[/dim grey]"
+        )
+    else:
+        tree = Tree(f"[bold grey]{entry.id}[/bold grey]")
 
     # Torrent section
     torrent_branch = tree.add(f"[green]torrent:[/green] {torrent.info.name()}")
