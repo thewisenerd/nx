@@ -17,7 +17,12 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
 @click.group(invoke_without_command=True)
 @click.option("-s", "--store", type=str, default=".nx_store")
-@click.option("--max-announce-count", type=int, default=3, help="maximum number of announce urls to show per torrent (0 = show all)")
+@click.option(
+    "--max-announce-count",
+    type=int,
+    default=3,
+    help="maximum number of announce urls to show per torrent (0 = show all)",
+)
 @click.pass_context
 def nx(ctx: click.Context, store: str, max_announce_count: int):
     ctx.ensure_object(dict)
@@ -43,7 +48,9 @@ def _show_entries(store_path: Path, max_announce_count: int):
 
             for entry in repo.store.entries:
                 if isinstance(entry, TorrentEntry):
-                    _print_torrent_entry(entry, prefix_map.get(entry.id, ""), max_announce_count)
+                    _print_torrent_entry(
+                        entry, prefix_map.get(entry.id, ""), max_announce_count
+                    )
     except FileNotFoundError:
         click.echo("no entries found")
 
@@ -76,7 +83,9 @@ def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
     return prefix_map
 
 
-def _print_torrent_entry(entry: TorrentEntry, unique_prefix: str = "", max_announce_count: int = 5):
+def _print_torrent_entry(
+    entry: TorrentEntry, unique_prefix: str = "", max_announce_count: int = 5
+):
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
     torrent = parse_torrent_buf(torrent_data)
@@ -229,7 +238,6 @@ def _calculate_dir_size(tree_node: dict) -> int:
     return total
 
 
-
 @nx.command()
 @click.argument("source")
 @click.option("--strip-components", type=int, required=False)
@@ -291,6 +299,106 @@ def add(
 
         repo.store.upsert(entry)
         click.echo(f"added torrent: {torrent.infohash}")
+
+
+@nx.command()
+@click.argument("identifier", required=False)
+@click.option("-a", "--all", "verify_all", is_flag=True, help="verify all torrents")
+@click.pass_context
+def verify(ctx: click.Context, identifier: str | None, verify_all: bool):
+    store: Path = ctx.obj["store"]
+    log = logger.bind(
+        method="verify", store=store, identifier=identifier, verify_all=verify_all
+    )
+    log.info("invoked")
+
+    if not identifier and not verify_all:
+        click.echo("must specify either an identifier or --all", err=True)
+        raise click.Abort()
+
+    if identifier and verify_all:
+        click.echo("cannot specify both identifier and --all", err=True)
+        raise click.Abort()
+
+    try:
+        with Repo(store) as repo:
+            if not repo.store.entries:
+                click.echo("no entries found")
+                return
+
+            if verify_all:
+                _verify_all_torrents(repo, store.parent)
+            else:
+                _verify_torrent_by_id(repo, store.parent, identifier)
+    except FileNotFoundError:
+        click.echo("no entries found")
+
+
+def _verify_torrent_by_id(repo: Repo, base_path: Path, identifier: str):
+    entry = _find_entry_by_prefix(repo, identifier)
+    if entry is None:
+        click.echo(f"torrent not found: {identifier}", err=True)
+        raise click.Abort()
+
+    _verify_single_torrent(repo, base_path, entry)
+
+
+def _verify_all_torrents(repo: Repo, base_path: Path):
+    torrent_entries = [e for e in repo.store.entries if isinstance(e, TorrentEntry)]
+    if not torrent_entries:
+        click.echo("no torrent entries found")
+        return
+
+    for entry in torrent_entries:
+        _verify_single_torrent(repo, base_path, entry)
+
+
+def _verify_single_torrent(repo: Repo, base_path: Path, entry: TorrentEntry):
+    torrent_data = base64.b64decode(entry.torrent)
+    torrent = parse_torrent_buf(torrent_data)
+
+    click.echo(f"verifying {entry.id[:8]}...")
+
+    strip_components = entry.nx["@internal"].strip_components
+    matches = torrent.matches(base_path, strip_components=strip_components)
+
+    if not matches.ok:
+        click.echo(f"files missing or invalid for {entry.id[:8]}", err=True)
+        if matches.missing:
+            click.echo(f"missing: {len(matches.missing)} files", err=True)
+        if matches.error:
+            click.echo(f"errors: {len(matches.error)} files", err=True)
+        return
+
+    verified = torrent.verify_pieces(base_path, strip_components=strip_components)
+
+    entry.nx["@internal"].last_verified = int(time.time())
+    repo.store.upsert(entry)
+
+    if verified:
+        click.echo(f"verified {entry.id[:8]} successfully")
+        entry.nx["@internal"].ready = True
+        repo.store.upsert(entry)
+    else:
+        click.echo(f"verification failed for {entry.id[:8]}", err=True)
+
+
+def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
+    matches = []
+    for entry in repo.store.entries:
+        if isinstance(entry, TorrentEntry):
+            if entry.id.startswith(identifier.upper()):
+                matches.append(entry)
+
+    if len(matches) == 0:
+        return None
+    elif len(matches) == 1:
+        return matches[0]
+    else:
+        click.echo(f"ambiguous identifier '{identifier}', matches:", err=True)
+        for match in matches:
+            click.echo(f"  {match.id}", err=True)
+        raise click.Abort()
 
 
 if __name__ == "__main__":
