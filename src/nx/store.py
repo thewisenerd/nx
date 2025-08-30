@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import typing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import ContextManager, Protocol, TypedDict, runtime_checkable
@@ -13,7 +14,7 @@ from .nx import Torrent
 MAGIC = hashlib.sha1("NXFS24757".encode()).hexdigest().upper()
 
 
-logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
 
 @runtime_checkable
@@ -48,12 +49,12 @@ class TorrentEntry:
         )
 
     @staticmethod
-    def from_torrent(torrent: Torrent) -> "TorrentEntry":
+    def from_torrent(torrent: Torrent, /, strip_components: int = 0) -> "TorrentEntry":
         return TorrentEntry(
             type=TorrentEntry.type_value,
             id=torrent.infohash,
             torrent=base64.b64encode(torrent.buffer).decode(),
-            nx={"@internal": NxInternal()},
+            nx={"@internal": NxInternal(strip_components=strip_components)},
         )
 
 
@@ -94,6 +95,16 @@ class Store:
                 self.entries[idx] = entry
                 return
         self.entries.append(entry)
+
+    def get_torrent(self, identifier: str) -> TorrentEntry | None:
+        for entry in self.entries:
+            if entry.id == identifier:
+                if entry.type != TorrentEntry.type_value:
+                    raise ValueError(
+                        f"entry is not a torrent, type={entry.type}, id={entry.id}"
+                    )
+                return typing.cast(TorrentEntry, entry)
+        return None
 
 
 @dataclass
@@ -146,24 +157,30 @@ def load(path: Path, /, ignore_checksum: bool) -> FileStore:
 class Repo(ContextManager):
     path: Path
     store: FileStore
+    checksum: str
+
+    @staticmethod
+    def validate_path(path: Path) -> None:
+        parent = path.parent
+        if not parent.exists():
+            raise FileNotFoundError(f"parent directory does not exist: {parent}")
+        if not parent.is_dir():
+            raise NotADirectoryError(f"parent is not a directory: {parent}")
 
     def __init__(
         self, path: Path = Path(".nx_store"), /, ignore_checksum: bool = False
     ):
         self.path = path
-
-        parent = self.path.parent
-        if not parent.exists():
-            raise FileNotFoundError(f"parent directory does not exist: {parent}")
-        if not parent.is_dir():
-            raise NotADirectoryError(f"parent is not a directory: {parent}")
+        self.validate_path(self.path)
 
         if not self.path.exists():
             self.store = FileStore()
         else:
             self.store = load(self.path, ignore_checksum=ignore_checksum)
 
-    def flush(self):
+        self.checksum = self.store.checksum
+
+    def flush_immediately(self):
         self.store.on_update()
         buffer = json.dumps(
             asdict(self.store)
@@ -174,6 +191,13 @@ class Repo(ContextManager):
             sort_keys=True,
         )
         self.path.write_text(buffer, encoding="utf-8")
+
+    def flush(self):
+        if self.store.checksum != self.checksum:
+            self.flush_immediately()
+            self.checksum = self.store.checksum
+        else:
+            logger.debug("no changes to flush")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.flush()

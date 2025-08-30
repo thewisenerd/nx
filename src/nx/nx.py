@@ -28,6 +28,17 @@ class Announce:
 
 
 @dataclass
+class MatchFilesResult:
+    found: set[Path]
+    missing: set[Path]
+    error: set[Path]
+
+    @property
+    def ok(self) -> bool:
+        return len(self.missing) == 0 and len(self.error) == 0
+
+
+@dataclass
 class Torrent:
     buffer: bytes
     info: lt.torrent_info
@@ -62,6 +73,25 @@ class Torrent:
             bytes_end = overlap_end - file_start
 
             yield file, range(bytes_start, bytes_end)
+
+    def matches(self, path: Path, /, strip_components: int = 0) -> MatchFilesResult:
+        return _match_files(self, path, strip_components)
+
+    def auto_strip_root(self) -> int:
+        ref: str | None = None
+        for file in self.files:
+            parts_sz = len(file.path.parts)
+            if parts_sz == 1:
+                return 0
+            if ref is None:
+                ref = file.path.parts[0]
+            else:
+                if ref != file.path.parts[0]:
+                    return 0
+        return 1
+
+    def verify_pieces(self, path: Path, /, strip_components: int = 0) -> bool:
+        return verify_pieces(self, path, strip_components=strip_components)
 
 
 @runtime_checkable
@@ -133,20 +163,10 @@ def parse_torrent(torrent_path: Path):
     )
 
 
-@dataclass
-class MatchFilesResult:
-    found: set[Path]
-    missing: set[Path]
-    error: set[Path]
-
-    @property
-    def ok(self) -> bool:
-        return len(self.missing) == 0 and len(self.error) == 0
-
-
 def _match_files(
     torrent: Torrent,
     save_path: Path,
+    strip_components: int = 0,
 ) -> MatchFilesResult:
     """
     :return: (good, bad) files matched
@@ -157,7 +177,16 @@ def _match_files(
     error: set[Path] = set()
 
     for file in torrent.files:
-        full_path = save_path / file.path
+        file_path = file.path
+        if strip_components:
+            parts_sz = len(file_path.parts)
+            if parts_sz <= strip_components:
+                raise ValueError(
+                    f"cannot strip {strip_components} components from path '{file_path}', only has {parts_sz} parts"
+                )
+            file_path = Path(*file_path.parts[strip_components:])
+
+        full_path = save_path / file_path
 
         if not full_path.exists():
             missing.add(file.path)
@@ -177,12 +206,13 @@ def _match_files(
 def verify_pieces(
     torrent: Torrent,
     save_path: Path,
+    /,
+    strip_components: int = 0,
 ) -> bool:
-    save_path = Path(os.path.expanduser(os.fspath(save_path)))
     log = logger.bind(method="verify_pieces", id=torrent.infohash)
     log.info("invoked", save_path=save_path)
 
-    match_files = _match_files(torrent, save_path)
+    match_files = torrent.matches(save_path, strip_components=strip_components)
     if not match_files.ok:
         log.error(
             "files do not match", missing=match_files.missing, error=match_files.error
@@ -201,7 +231,15 @@ def verify_pieces(
 
                 buf: bytearray = bytearray()
                 for file, r in torrent.get_piece_refs(piece_offset, piece_sz):
-                    buf.extend(reader.read(save_path / file.path, r))
+                    file_path = file.path
+                    if strip_components:
+                        parts_sz = len(file_path.parts)
+                        if parts_sz <= strip_components:
+                            raise ValueError(
+                                f"cannot strip {strip_components} components from path '{file_path}', only has {parts_sz} parts"
+                            )
+                        file_path = Path(*file_path.parts[strip_components:])
+                    buf.extend(reader.read(save_path / file_path, r))
                     pbar.update(len(buf))
 
                 data: bytes = bytes(buf[:piece_sz])

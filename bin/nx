@@ -4,6 +4,6 @@ set -e
 
 source="${BASH_SOURCE:-$0}"
 dir=$(cd -P "$(dirname "$source")" && pwd)
-cd "$dir/.."
+project=$(realpath "$dir/..")
 
-exec uv run -m nx.cli "$@"
+exec uv run --project "$project" nx "$@"
