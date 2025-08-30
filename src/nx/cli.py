@@ -23,18 +23,25 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
     default=3,
     help="maximum number of announce urls to show per torrent (0 = show all)",
 )
+@click.option(
+    "--max-files",
+    type=int,
+    default=26,
+    help="maximum number of files to show per torrent (0 = show all)",
+)
 @click.pass_context
-def nx(ctx: click.Context, store: str, max_announce_count: int):
+def nx(ctx: click.Context, store: str, max_announce_count: int, max_files: int):
     ctx.ensure_object(dict)
     ctx.obj["store"] = Path(store).absolute()
     ctx.obj["max_announce_count"] = max_announce_count
+    ctx.obj["max_files"] = max_files
     Repo.validate_path(ctx.obj["store"])
 
     if ctx.invoked_subcommand is None:
-        _show_entries(ctx.obj["store"], max_announce_count)
+        _show_entries(ctx.obj["store"], max_announce_count, max_files)
 
 
-def _show_entries(store_path: Path, max_announce_count: int):
+def _show_entries(store_path: Path, max_announce_count: int, max_files: int):
     """Pretty print all entries in the store"""
     try:
         with Repo(store_path) as repo:
@@ -49,7 +56,10 @@ def _show_entries(store_path: Path, max_announce_count: int):
             for entry in repo.store.entries:
                 if isinstance(entry, TorrentEntry):
                     _print_torrent_entry(
-                        entry, prefix_map.get(entry.id, ""), max_announce_count
+                        entry,
+                        prefix_map.get(entry.id, ""),
+                        max_announce_count,
+                        max_files,
                     )
     except FileNotFoundError:
         click.echo("no entries found")
@@ -84,7 +94,10 @@ def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
 
 
 def _print_torrent_entry(
-    entry: TorrentEntry, unique_prefix: str = "", max_announce_count: int = 5
+    entry: TorrentEntry,
+    unique_prefix: str = "",
+    max_announce_count: int = 5,
+    max_files: int = 26,
 ):
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
@@ -120,7 +133,7 @@ def _print_torrent_entry(
             announce_branch.add(f"[dim]... and {remaining} more[/dim]")
 
     # Files structure
-    _add_files_to_tree(torrent_branch, torrent.files)
+    _add_files_to_tree(torrent_branch, torrent.files, max_files)
 
     # Private flag
     private_status = "true" if torrent.private else "false"
@@ -144,16 +157,21 @@ def _print_torrent_entry(
     console.print(tree)
 
 
-def _add_files_to_tree(parent_branch, files: list):
+def _add_files_to_tree(parent_branch, files: list, max_files: int = 0):
     """Add files to a Rich tree branch with proper directory structure"""
     if not files:
         return
+
+    # Apply file limit if specified
+    files_to_show = files
+    if max_files > 0:
+        files_to_show = files[:max_files]
 
     # Group files by their directory structure
     tree = {}
     single_files = []
 
-    for file in files:
+    for file in files_to_show:
         if len(file.path.parts) == 1:
             single_files.append(file)
         else:
@@ -177,6 +195,11 @@ def _add_files_to_tree(parent_branch, files: list):
         dir_size = _calculate_dir_size(tree[dir_name])
         dir_branch = parent_branch.add(f"{dir_name}/ ({_format_size(dir_size)})")
         _add_dir_contents_to_tree(dir_branch, tree[dir_name])
+
+    # Show "... and N more" if files were truncated
+    if 0 < max_files < len(files):
+        remaining = len(files) - max_files
+        parent_branch.add(f"[dim]... and {remaining} more files[/dim]")
 
 
 def _add_dir_contents_to_tree(parent_branch, tree_node: dict):
@@ -267,8 +290,10 @@ def add(
         if strip_components is not None:
             click.echo("cannot use --strip-components with --auto-strip-root", err=True)
             raise click.Abort()
-        strip_components = torrent.auto_strip_root()
-        log.info("auto-strip-root", strip_components=strip_components)
+        strip_components, root_ref = torrent.auto_strip_root()
+        log.info(
+            "auto-strip-root", strip_components=strip_components, root_ref=root_ref
+        )
 
     entry = TorrentEntry.from_torrent(torrent, strip_components)
 

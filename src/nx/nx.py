@@ -84,18 +84,18 @@ class Torrent:
     def matches(self, path: Path, /, strip_components: int = 0) -> MatchFilesResult:
         return _match_files(self, path, strip_components)
 
-    def auto_strip_root(self) -> int:
+    def auto_strip_root(self) -> tuple[int, str | None]:
         ref: str | None = None
         for file in self.files:
             parts_sz = len(file.path.parts)
             if parts_sz == 1:
-                return 0
+                return 0, None
             if ref is None:
                 ref = file.path.parts[0]
             else:
                 if ref != file.path.parts[0]:
-                    return 0
-        return 1
+                    return 0, None
+        return 1, ref
 
     def verify_pieces(self, path: Path, /, strip_components: int = 0) -> bool:
         return verify_pieces(self, path, strip_components=strip_components)

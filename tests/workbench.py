@@ -15,12 +15,9 @@ if __name__ == "__main__":
     # print(torr)
 
     torr = parse_torrent(
-        Path("../samples/E6E2AB75C79379259D1AE608839A28F94056390E.torrent"),
+        Path("../samples/works_poe_raven_edition_vol2_0912_archive.torrent"),
     )
 
     with Repo() as repo:
-        for entry in repo.store.entries:
-            print(entry)
-
         entry = TorrentEntry.from_torrent(torr)
         repo.store.upsert(entry)
