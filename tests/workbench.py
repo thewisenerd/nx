@@ -1,0 +1,26 @@
+from pathlib import Path
+
+from nx.nx import parse_torrent
+from nx.store import Repo, TorrentEntry
+
+if __name__ == "__main__":
+    # verify_pieces(
+    #     Path("../samples/E6E2AB75C79379259D1AE608839A28F94056390E.torrent"),
+    #     Path("~/p2p"),
+    # )
+
+    # torr = parse_torrent(
+    #     Path("../samples/2DA72B551DD309A22636F1B1668AE31F9200451B.torrent")
+    # )
+    # print(torr)
+
+    torr = parse_torrent(
+        Path("../samples/E6E2AB75C79379259D1AE608839A28F94056390E.torrent"),
+    )
+
+    with Repo() as repo:
+        for entry in repo.store.entries:
+            print(entry)
+
+        entry = TorrentEntry.from_torrent(torr)
+        repo.store.upsert(entry)

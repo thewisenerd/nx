@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -e
+
+source="${BASH_SOURCE:-$0}"
+dir=$(cd -P "$(dirname "$source")" && pwd)
+cd "$dir/.."
+
+exec uv run -m nx.cli "$@"
