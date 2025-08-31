@@ -56,6 +56,10 @@ directory
     ...
 ```
 
+## installation
+
+`git clone`, `uv sync`, and add the `bin/` dir to your path. _/shrug_.
+
 ## nx
 
 ```
