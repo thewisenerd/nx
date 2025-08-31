@@ -125,3 +125,7 @@ remotes:
   host: localhost
   port: 9091
 ```
+
+### shell completions
+
+- [ ] pathlike autocomplete
