@@ -24,20 +24,31 @@ checksum: {crc32 encoded with checksum field set to ""}
 
 #### where will the store be?
 
-releases are usually single-file, or single-folder.
+[BEP 0003][spec] states:
 
-let's take the following examples.
+> In the single file case, the name key is the name of a file, in the muliple
+> file case, it's the name of a directory.
+
+[spec]: https://www.bittorrent.org/beps/bep_0003.html
+
+in the case of single-file torrents, we want the store to be _beside_ the file.
+
+to prevent accidental store creations, you may not `nx add` a single-file
+torrent without also specifying `-f`.
 
 ```
-- Inception.2010.mkv
-+ Inception.2010/
-+   Inception.2010.mkv
-+   .nx_store {}
+  Inception.2010.mkv
++ .nx_store{entries=[...,strip-components=0]}
+```
 
- Interstellar.2014/
-   release.nfo
-   Interstellar.2014.mkv
-+  .nx_store {entry.strip-components=1}
+in the case of multi-file torrents, we want the store to be inside the root
+directory
+
+```
+  Interstellar.2014/
++   .nx_store{entries=[...,strip-components=1]}
+    release.nfo
+    Interstellar.2014.mkv
 ```
 
 ### nx cli

@@ -152,12 +152,19 @@ def _resolve_root(
     default=True,
     help="automatically strip root directory and resolve store path",
 )
+@click.option(
+    "-f",
+    "--force",
+    is_flag=True,
+    help="force addition in specific cases",
+)
 @click.pass_context
 def add(
     ctx: click.Context,
     source: Path,
     strip_components: int | None,
     auto_strip_root: bool,
+    force: bool,
 ) -> None:
     store_path: Path | None = _get_store_path(ctx)
     log = logger.bind(
@@ -190,8 +197,12 @@ def add(
             strip_components = 1
             store_path = _resolve_root(torrent, store_path, root_ref)
         else:
-            # TODO: do not allow torrents without a root-ref unless -f specified
-            pass
+            if not force:
+                click.echo(
+                    "torrent has no root-ref, use -f to force addition",
+                    err=True,
+                )
+                raise click.Abort()
 
     entry = TorrentEntry.from_torrent(torrent, strip_components or 0)
 
@@ -326,7 +337,7 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
 
 
 @nx.command()
-@click.argument("source")
+@click.argument("source", type=PathType(allowed_extensions={".torrent"}))
 @click.option(
     "--max-announce-count",
     type=int,
@@ -339,14 +350,13 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
     default=26,
     help="maximum number of files to show per torrent (0 = show all)",
 )
-def parse(source: str, max_announce_count: int, max_files: int) -> None:
+def parse(source: Path, max_announce_count: int, max_files: int) -> None:
     """parse a torrent file and display its info"""
-    source_path = Path(source).expanduser()
-    if not source_path.exists():
+    if not source.exists():
         click.echo(f"source does not exist: '{source}'", err=True)
         raise click.Abort()
 
-    torrent = parse_torrent(source_path)
+    torrent = parse_torrent(source)
     _print_torrent_info(console, torrent, max_announce_count, max_files)
 
 
