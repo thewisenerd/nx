@@ -57,6 +57,9 @@ class TorrentEntry:
             nx={"@internal": NxInternal(strip_components=strip_components)},
         )
 
+    def buffer(self) -> bytes:
+        return base64.b64decode(self.torrent)
+
 
 @dataclass
 class Store:
@@ -158,6 +161,7 @@ class Repo(ContextManager):
     path: Path
     store: FileStore
     checksum: str
+    save_path: Path
 
     @staticmethod
     def validate_path(path: Path) -> None:
@@ -167,11 +171,10 @@ class Repo(ContextManager):
         if not parent.is_dir():
             raise NotADirectoryError(f"parent is not a directory: {parent}")
 
-    def __init__(
-        self, path: Path = Path(".nx_store"), /, ignore_checksum: bool = False
-    ):
+    def __init__(self, path: Path, /, ignore_checksum: bool = False):
         self.path = path
         self.validate_path(self.path)
+        self.save_path = self.path.absolute().parent
 
         if not self.path.exists():
             self.store = FileStore()

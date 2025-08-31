@@ -18,6 +18,6 @@ if __name__ == "__main__":
         Path("../samples/works_poe_raven_edition_vol2_0912_archive.torrent"),
     )
 
-    with Repo() as repo:
+    with Repo(Path(".nx_store")) as repo:
         entry = TorrentEntry.from_torrent(torr)
         repo.store.upsert(entry)
