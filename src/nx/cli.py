@@ -12,6 +12,7 @@ from .cli_helpers import (
     _print_torrent_entry,
     _print_torrent_info,
 )
+from .click_pathtype import PathType
 from .nx import Torrent, parse_torrent, parse_torrent_buf
 from .store import DefaultStorePathName, Repo, TorrentEntry
 
@@ -35,7 +36,7 @@ def _get_store_path(ctx: click.Context) -> Path | None:
 
 
 @click.group(invoke_without_command=True)
-@click.option("-s", "--store", type=Optional[str])
+@click.option("-s", "--store", type=Optional[str], help="use a specific store file")
 @click.option(
     "--max-announce-count",
     type=click.IntRange(min=0),
@@ -113,12 +114,22 @@ def _resolve_root(
         new_store_path = candidate / DefaultStorePathName
         log.info("above root-ref", new_store_path=new_store_path)
 
-        click.echo()
+        console.print("switching to directory ", end="")
+        console.print(
+            candidate.name, style="yellow", markup=False, highlight=False, end=""
+        )
+        console.print("")
 
         return new_store_path
 
     # candidate 3, we need a root ref, but it doesn't exist yet..
     if candidate.parent.exists() and candidate.parent.is_dir():
+        console.print("creating directory ", end="")
+        console.print(
+            candidate.name, style="yellow", markup=False, highlight=False, end=""
+        )
+        console.print("")
+
         candidate.mkdir(exist_ok=True)
         os.chdir(candidate)
 
@@ -129,13 +140,24 @@ def _resolve_root(
     return store_path
 
 
-@nx.command()
-@click.argument("source")
-@click.option("--strip-components", type=Optional[int])
-@click.option("--auto-strip-root/--no-auto-strip-root", default=True)
+@nx.command(help="add a torrent file to the store")
+@click.argument("source", type=PathType(allowed_extensions={".torrent"}))
+@click.option(
+    "--strip-components",
+    type=Optional[int],
+    help="number of path components to strip when adding files",
+)
+@click.option(
+    "--auto-strip-root/--no-auto-strip-root",
+    default=True,
+    help="automatically strip root directory and resolve store path",
+)
 @click.pass_context
 def add(
-    ctx: click.Context, source: str, strip_components: int | None, auto_strip_root: bool
+    ctx: click.Context,
+    source: Path,
+    strip_components: int | None,
+    auto_strip_root: bool,
 ) -> None:
     store_path: Path | None = _get_store_path(ctx)
     log = logger.bind(
@@ -147,12 +169,14 @@ def add(
     )
     log.info("invoked")
 
-    source_path = Path(source).expanduser()
-    if not source_path.exists():
-        click.echo(f"source does not exist: '{source_path}'", err=True)
+    if not source.exists():
+        click.echo(f"source does not exist: '{source}'", err=True)
+        raise click.Abort()
+    if not source.is_file():
+        click.echo(f"source is not a file: '{source}'", err=True)
         raise click.Abort()
 
-    torrent: Torrent = parse_torrent(source_path)
+    torrent: Torrent = parse_torrent(source)
 
     if auto_strip_root:
         if strip_components is not None:
@@ -208,6 +232,7 @@ def add(
 @click.option("-a", "--all", "verify_all", is_flag=True, help="verify all torrents")
 @click.pass_context
 def verify(ctx: click.Context, identifier: str | None, verify_all: bool) -> None:
+    """verify the files for a torrent by its identifier (prefix)"""
     store_path: Path | None = _get_store_path(ctx)
     log = logger.bind(
         method="verify", store=store_path, identifier=identifier, verify_all=verify_all
@@ -315,7 +340,7 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
     help="maximum number of files to show per torrent (0 = show all)",
 )
 def parse(source: str, max_announce_count: int, max_files: int) -> None:
-    """Parse a torrent file and display its info"""
+    """parse a torrent file and display its info"""
     source_path = Path(source).expanduser()
     if not source_path.exists():
         click.echo(f"source does not exist: '{source}'", err=True)
