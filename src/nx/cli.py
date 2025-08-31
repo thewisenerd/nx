@@ -93,6 +93,33 @@ def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
     return prefix_map
 
 
+def _add_torrent_info_to_tree(
+    parent_branch, torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
+):
+    """Add common torrent information to a tree branch"""
+    # Announce section
+    if torrent.trackers:
+        announce_branch = parent_branch.add("[yellow]announce[/yellow]")
+
+        trackers_to_show = torrent.trackers
+        if max_announce_count > 0:
+            trackers_to_show = torrent.trackers[:max_announce_count]
+
+        for tracker in trackers_to_show:
+            announce_branch.add(tracker.url)
+
+        if 0 < max_announce_count < len(torrent.trackers):
+            remaining = len(torrent.trackers) - max_announce_count
+            announce_branch.add(f"[dim]... and {remaining} more[/dim]")
+
+    # Files structure
+    _add_files_to_tree(parent_branch, torrent.files, max_files)
+
+    # Private flag
+    private_status = "true" if torrent.private else "false"
+    parent_branch.add(f"[magenta]private:[/magenta] {private_status}")
+
+
 def _print_torrent_entry(
     entry: TorrentEntry,
     unique_prefix: str = "",
@@ -117,27 +144,8 @@ def _print_torrent_entry(
     # Torrent section
     torrent_branch = tree.add(f"[green]torrent:[/green] {torrent.info.name()}")
 
-    # Announce section
-    if torrent.trackers:
-        announce_branch = torrent_branch.add("[yellow]announce[/yellow]")
-
-        trackers_to_show = torrent.trackers
-        if max_announce_count > 0:
-            trackers_to_show = torrent.trackers[:max_announce_count]
-
-        for tracker in trackers_to_show:
-            announce_branch.add(tracker.url)
-
-        if 0 < max_announce_count < len(torrent.trackers):
-            remaining = len(torrent.trackers) - max_announce_count
-            announce_branch.add(f"[dim]... and {remaining} more[/dim]")
-
-    # Files structure
-    _add_files_to_tree(torrent_branch, torrent.files, max_files)
-
-    # Private flag
-    private_status = "true" if torrent.private else "false"
-    torrent_branch.add(f"[magenta]private:[/magenta] {private_status}")
+    # Add common torrent info
+    _add_torrent_info_to_tree(torrent_branch, torrent, max_announce_count, max_files)
 
     # NX metadata section
     nx_branch = tree.add("[blue]nx[/blue]")
@@ -424,6 +432,54 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
         for match in matches:
             click.echo(f"  {match.id}", err=True)
         raise click.Abort()
+
+
+@nx.command()
+@click.argument("source")
+@click.option(
+    "--max-announce-count",
+    type=int,
+    default=3,
+    help="maximum number of announce urls to show per torrent (0 = show all)",
+)
+@click.option(
+    "--max-files",
+    type=int,
+    default=26,
+    help="maximum number of files to show per torrent (0 = show all)",
+)
+def parse(source: str, max_announce_count: int, max_files: int):
+    """Parse a torrent file and display its info"""
+    source_path = Path(source).expanduser()
+    if not source_path.exists():
+        click.echo(f"source does not exist: '{source}'", err=True)
+        raise click.Abort()
+
+    try:
+        torrent = parse_torrent(source_path)
+        _print_torrent_info(torrent, max_announce_count, max_files)
+    except Exception as e:
+        click.echo(f"failed to parse torrent: {e}", err=True)
+        raise click.Abort()
+
+
+def _print_torrent_info(
+    torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
+):
+    """Print torrent info without store metadata"""
+    console = Console()
+
+    tree = Tree(f"[green]torrent:[/green] {torrent.info.name()}")
+
+    # Basic info
+    tree.add(f"[cyan]infohash:[/cyan] {torrent.infohash}")
+    tree.add(f"[cyan]size:[/cyan] {_format_size(torrent.sz)}")
+    tree.add(f"[cyan]pieces:[/cyan] {torrent.pc}")
+
+    # Add common torrent info
+    _add_torrent_info_to_tree(tree, torrent, max_announce_count, max_files)
+
+    console.print(tree)
 
 
 if __name__ == "__main__":
