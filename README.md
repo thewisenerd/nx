@@ -4,22 +4,25 @@
 
 ### metadata store (`.nx_store`)
 
+a metadata store contains references to one or more torrents.
+
+a torrent has checksum data that can be used for file verification.
+a torrent has announce data for registering the torrent in a client.
+
 ```
-magic: 'nx001'
+magic: {starts with "AF42", sha1 of "NXFS24757"}
+checksum: {sha1 of entries}
 entries:
 - id: {0x00infohash}
-  @type: torrent
+  type: torrent
   torrent: {bytes}
   nx:
     @internal:
       ...
-    custom:
-      ...
 - id: {0x01infohash}
-  @type: torrent
+  type: torrent
   torrent: {bytes}
   nx: ...
-checksum: {crc32 encoded with checksum field set to ""}
 ```
 
 #### where will the store be?
@@ -37,7 +40,7 @@ to prevent accidental store creations, you may not `nx add` a single-file
 torrent without also specifying `-f`.
 
 ```
-  Inception.2010.mkv
+  big_buck_bunny_1080p_h264.mov
 + .nx_store{entries=[...,strip-components=0]}
 ```
 
@@ -45,33 +48,37 @@ in the case of multi-file torrents, we want the store to be inside the root
 directory
 
 ```
-  Interstellar.2014/
+  Pioneer One Season One Complete XviD/
 +   .nx_store{entries=[...,strip-components=1]}
-    release.nfo
-    Interstellar.2014.mkv
+    vodo.nfo
+    Pioneer.One.S01E01.720x480_VODO_XviD.avi
+    Pioneer.One.S01E02.720x480_VODO_XviD.avi
+    ...
 ```
 
-### nx cli
+## nx
 
 ```
 Usage: nx [OPTIONS] COMMAND [ARGS]...
 
 Options:
-  -s, --store TEXT
-  --max-announce-count INTEGER  maximum number of announce urls to show per
-                                torrent (0 = show all)
-  --max-files INTEGER           maximum number of files to show per torrent (0
-                                = show all)
-  --help                        Show this message and exit.
+  -s, --store OPTIONAL            use a specific store file
+  --max-announce-count INTEGER RANGE
+                                  maximum number of announce urls to show per
+                                  torrent (0 = show all)  [x>=0]
+  --max-files INTEGER RANGE       maximum number of files to show per torrent
+                                  (0 = show all)  [x>=0]
+  --help                          Show this message and exit.
 
 Commands:
-  add
-  verify
+  add     add a torrent file to the store
+  parse   parse a torrent file and display its info
+  verify  verify the files for a torrent by its identifier (prefix)
 ```
 
-#### examples
+### list
 
-`nx`
+simply invoking `nx` lists the entries in the store.
 
 ```
 20FD2B2A977871406E211606CAF7B65F412FE9FF
@@ -92,25 +99,33 @@ Commands:
         └── ready: false
 ```
 
-#### add
+### add
 
 ```
 Usage: nx add [OPTIONS] SOURCE
 
+  add a torrent file to the store
+
 Options:
-  --strip-components INTEGER
+  --strip-components OPTIONAL     number of path components to strip when
+                                  adding files
   --auto-strip-root / --no-auto-strip-root
+                                  automatically strip root directory and
+                                  resolve store path
+  -f, --force                     force addition in specific cases
   --help                          Show this message and exit.
 ```
 
 `nx add path/to/file.torrent`
 
-`nx add "magnet:?xt=urn:btih:..."`
+`nx add "magnet:?xt=urn:btih:..."` (TODO)
 
-#### verify
+### verify
 
 ```
 Usage: nx verify [OPTIONS] [IDENTIFIER]
+
+  verify the files for a torrent by its identifier (prefix)
 
 Options:
   -a, --all  verify all torrents
@@ -123,11 +138,40 @@ Options:
 
 ## TODO
 
-### sync (WIP)
+### add
+
+- [ ] magnet support
+    - [ ] simply fetch from iTorrents.org cache to start
+
+### verify
+
+- [ ] switch to verify all by default if only one entry exists; need identifier
+  or `-a` if multiple entries exist
+
+### config
+
+`$XDG_CONFIG_HOME/nx` (defaults to `~/.config/nx`) is the base directory.
+
+`nx.conf` is a YAML file that may be used to configure certain options.
 
 ```
-# ~/.config/nx/nx.conf
+# nx.conf
 
+# use proxy for http operations
+# proxy: "socks5://10.64.0.1:1080"
+```
+
+### sync
+
+**goals**
+
+- transmission
+    - register a torrent
+    - sync seeding ratios to store
+- announce filtering
+- validate DHT disabled before syncing private torrents
+
+```
 remotes:
 - id: transmission
   host: localhost
