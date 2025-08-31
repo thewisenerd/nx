@@ -1,21 +1,20 @@
 import hashlib
 import io
 import os
-import typing
-from contextlib import AbstractContextManager
+import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Generator
 
 import libtorrent as lt
 import structlog
 from rich.progress import (
-    Progress,
     BarColumn,
-    TextColumn,
     FileSizeColumn,
-    TransferSpeedColumn,
+    Progress,
+    TextColumn,
     TimeRemainingColumn,
+    TransferSpeedColumn,
 )
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -60,7 +59,7 @@ class Torrent:
 
     def get_piece_refs(
         self, piece_offset: int, piece_sz: int
-    ) -> typing.Generator[tuple[File, range], None, None]:
+    ) -> Generator[tuple[File, range], None, None]:
         start = piece_offset
         end = piece_offset + piece_sz
 
@@ -106,18 +105,27 @@ class FileReader(Protocol):
     def read(self, file: Path, r: range) -> bytes: ...
 
 
-class DefaultFileReader(AbstractContextManager):
-    def __init__(self):
+class DefaultFileReader:
+    def __init__(self) -> None:
         self.refs: dict[str, io.BufferedReader] = {}
 
-    def __exit__(self, exc_type, exc_value, traceback, /):
+    def __enter__(self) -> "DefaultFileReader":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: types.TracebackType | None,
+        /,
+    ) -> None:
         for ref in self.refs.values():
             ref.close()
 
     def read(self, file: Path, r: range) -> bytes:
         key = os.fspath(file)
 
-        if file not in self.refs:
+        if key not in self.refs:
             self.refs[key] = open(os.fspath(file), "rb")
 
         fh = self.refs[key]
@@ -147,7 +155,9 @@ def parse_torrent_buf(buffer: bytes) -> Torrent:
 
     trackers: list[Announce] = []
     for tracker in info.trackers():
-        typing.cast(lt.announce_entry, tracker)  # fix type hints
+        assert isinstance(tracker, lt.announce_entry), (
+            f"expected announce_entry, got {type(tracker)}"
+        )
         trackers.append(Announce(url=tracker.url, tier=tracker.tier))
 
     return Torrent(
@@ -272,9 +282,9 @@ def verify_pieces(
 
                 data: bytes = bytes(buf[:piece_sz])
                 actual_hash: bytes = hashlib.sha1(data).digest()
-                expected_hash: bytes = typing.cast(
-                    bytes,  # the actual type is bytes..
-                    torrent.info.hash_for_piece(piece_idx),
+                expected_hash = torrent.info.hash_for_piece(piece_idx)
+                assert isinstance(expected_hash, bytes), (
+                    f"expected bytes, got {type(actual_hash)}"
                 )
 
                 if actual_hash != expected_hash:

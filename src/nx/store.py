@@ -1,10 +1,11 @@
 import base64
 import hashlib
 import json
+import types
 import typing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import ContextManager, Protocol, TypedDict, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable, Any
 
 import structlog
 
@@ -22,6 +23,8 @@ class Entry(Protocol):
     type: str
     id: str
 
+    def encode(self) -> dict[str, Any]: ...
+
 
 @dataclass
 class NxInternal:
@@ -34,7 +37,7 @@ NxMeta = TypedDict("NxMeta", {"@internal": NxInternal})
 
 
 @dataclass
-class TorrentEntry:
+class TorrentEntry(Entry):
     type_value = "torrent"
 
     type: str
@@ -43,10 +46,13 @@ class TorrentEntry:
     torrent: str
     nx: NxMeta
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         assert self.type == TorrentEntry.type_value, (
             f"type must be '{TorrentEntry.type_value}'"
         )
+
+    def encode(self) -> dict[str, Any]:
+        return asdict(self)
 
     @staticmethod
     def from_torrent(torrent: Torrent, /, strip_components: int = 0) -> "TorrentEntry":
@@ -67,21 +73,15 @@ class Store:
 
     @property
     def checksum(self) -> str:
-        return (
-            hashlib.sha1(
-                json.dumps(
-                    [
-                        asdict(entry)
-                        for entry in sorted(self.entries, key=lambda e: e.id)
-                    ],
-                    sort_keys=True,
-                ).encode(),
-            )
-            .hexdigest()
-            .upper()
-        )
+        obj = [entry.encode() for entry in sorted(self.entries, key=lambda e: e.id)]
+        buffer: bytes = json.dumps(
+            obj,
+            sort_keys=True,
+        ).encode()
 
-    def on_update(self):
+        return hashlib.sha1(buffer).hexdigest().upper()
+
+    def on_update(self) -> None:
         ids = set()
         for entry in self.entries:
             if entry.id in ids:
@@ -114,7 +114,7 @@ class Store:
 class FileStore(Store):
     magic: str = field(default=MAGIC)
 
-    def on_update(self):
+    def on_update(self) -> None:
         super().on_update()
 
 
@@ -127,7 +127,7 @@ def load(path: Path, /, ignore_checksum: bool) -> FileStore:
     if obj.get("magic") != MAGIC:
         raise ValueError("invalid magic")
 
-    entries = []
+    entries: list[Entry] = []
     for entry in obj.get("entries", []):
         if entry.get("type") == TorrentEntry.type_value:
             nx = entry.get("nx", {})
@@ -157,7 +157,7 @@ def load(path: Path, /, ignore_checksum: bool) -> FileStore:
     return store
 
 
-class Repo(ContextManager):
+class Repo:
     path: Path
     store: FileStore
     checksum: str
@@ -183,7 +183,10 @@ class Repo(ContextManager):
 
         self.checksum = self.store.checksum
 
-    def flush_immediately(self):
+    def __enter__(self) -> "Repo":
+        return self
+
+    def flush_immediately(self) -> None:
         self.store.on_update()
         buffer = json.dumps(
             asdict(self.store)
@@ -195,12 +198,17 @@ class Repo(ContextManager):
         )
         self.path.write_text(buffer, encoding="utf-8")
 
-    def flush(self):
+    def flush(self) -> None:
         if self.store.checksum != self.checksum:
             self.flush_immediately()
             self.checksum = self.store.checksum
         else:
             logger.debug("no changes to flush")
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         self.flush()

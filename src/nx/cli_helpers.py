@@ -38,8 +38,11 @@ def _calculate_unique_prefixes(ids: list[str]) -> dict[str, str]:
 
 
 def _add_torrent_info_to_tree(
-    parent_branch, torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
-):
+    parent_branch: Tree,
+    torrent: Torrent,
+    max_announce_count: int,
+    max_files: int,
+) -> None:
     """Add common torrent information to a tree branch"""
     # Announce section
     if torrent.trackers:
@@ -69,7 +72,7 @@ def _print_torrent_entry(
     unique_prefix: str = "",
     max_announce_count: int = 5,
     max_files: int = 26,
-):
+) -> None:
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
     torrent = parse_torrent_buf(torrent_data)
@@ -111,7 +114,7 @@ def _print_torrent_entry(
 
 def _print_torrent_info(
     torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
-):
+) -> None:
     """Print torrent info without store metadata"""
     console = Console()
 
