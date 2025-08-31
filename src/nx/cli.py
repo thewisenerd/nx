@@ -1,11 +1,11 @@
+import os
 import time
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 import click
 import structlog
-
-from nx.store import Repo, TorrentEntry
+from rich.console import Console
 
 from .cli_helpers import (
     _calculate_unique_prefixes,
@@ -13,11 +13,14 @@ from .cli_helpers import (
     _print_torrent_info,
 )
 from .nx import Torrent, parse_torrent, parse_torrent_buf
+from .store import DefaultStorePathName, Repo, TorrentEntry
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
 
-_default_store_path = Path(".nx_store").absolute()
+_default_store_path = Path(DefaultStorePathName).absolute()
+
+console = Console()
 
 ctx_keys = {
     "store_path": "store_path",
@@ -78,11 +81,52 @@ def _show_entries(
         for entry in repo.store.entries:
             if isinstance(entry, TorrentEntry):
                 _print_torrent_entry(
+                    console,
                     entry,
                     prefix_map.get(entry.id, ""),
                     max_announce_count,
                     max_files,
                 )
+
+
+def _resolve_root(
+    torrent: Torrent, store_path: Path | None, root_ref: str
+) -> Path | None:
+    log = logger.bind(method="_resolve_root", id=torrent.infohash, root_ref=root_ref)
+
+    search = store_path.parent if store_path else _default_store_path.parent
+    log.info("invoked", search=search)
+
+    # candidate 1, we are "in" the 'root_ref' directory
+    if search.parts[-1] == root_ref:
+        log.info("in root-ref")
+        return store_path
+
+    candidate = search / root_ref
+    if candidate.exists():
+        if not candidate.is_dir():
+            click.echo(
+                f"root-ref exists but is not a directory: '{candidate}'", err=True
+            )
+            raise click.Abort()
+
+        new_store_path = candidate / DefaultStorePathName
+        log.info("above root-ref", new_store_path=new_store_path)
+
+        click.echo()
+
+        return new_store_path
+
+    # candidate 3, we need a root ref, but it doesn't exist yet..
+    if candidate.parent.exists() and candidate.parent.is_dir():
+        candidate.mkdir(exist_ok=True)
+        os.chdir(candidate)
+
+        new_store_path = candidate / DefaultStorePathName
+        log.info("creating root-ref", new_store_path=new_store_path)
+        return new_store_path
+
+    return store_path
 
 
 @nx.command()
@@ -114,10 +158,16 @@ def add(
         if strip_components is not None:
             click.echo("cannot use --strip-components with --auto-strip-root", err=True)
             raise click.Abort()
-        strip_components, root_ref = torrent.auto_strip_root()
-        log.info(
-            "auto-strip-root", strip_components=strip_components, root_ref=root_ref
-        )
+
+        root_ref = torrent.strip_root()
+        log.info("auto-strip-root", root_ref=root_ref)
+
+        if root_ref:
+            strip_components = 1
+            store_path = _resolve_root(torrent, store_path, root_ref)
+        else:
+            # TODO: do not allow torrents without a root-ref unless -f specified
+            pass
 
     entry = TorrentEntry.from_torrent(torrent, strip_components or 0)
 
@@ -272,7 +322,7 @@ def parse(source: str, max_announce_count: int, max_files: int) -> None:
         raise click.Abort()
 
     torrent = parse_torrent(source_path)
-    _print_torrent_info(torrent, max_announce_count, max_files)
+    _print_torrent_info(console, torrent, max_announce_count, max_files)
 
 
 if __name__ == "__main__":

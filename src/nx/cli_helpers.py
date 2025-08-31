@@ -68,6 +68,7 @@ def _add_torrent_info_to_tree(
 
 
 def _print_torrent_entry(
+    console: Console,
     entry: TorrentEntry,
     unique_prefix: str = "",
     max_announce_count: int = 5,
@@ -76,8 +77,6 @@ def _print_torrent_entry(
     """Pretty print a torrent entry with hierarchical display"""
     torrent_data = base64.b64decode(entry.torrent)
     torrent = parse_torrent_buf(torrent_data)
-
-    console = Console()
 
     # Root tree with entry ID - highlight unique prefix
     if unique_prefix and len(unique_prefix) < len(entry.id):
@@ -113,11 +112,9 @@ def _print_torrent_entry(
 
 
 def _print_torrent_info(
-    torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
+    console: Console, torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
 ) -> None:
     """Print torrent info without store metadata"""
-    console = Console()
-
     tree = Tree(f"[green]torrent:[/green] {torrent.info.name()}")
 
     # Basic info

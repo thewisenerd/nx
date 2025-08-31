@@ -4,7 +4,7 @@ import os
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable, Generator
+from typing import Generator, Protocol, runtime_checkable
 
 import libtorrent as lt
 import structlog
@@ -83,18 +83,22 @@ class Torrent:
     def matches(self, path: Path, /, strip_components: int = 0) -> MatchFilesResult:
         return _match_files(self, path, strip_components)
 
-    def auto_strip_root(self) -> tuple[int, str | None]:
+    def strip_root(self) -> str | None:
+        log = logger.bind(method="strip_root", id=self.infohash)
+
         ref: str | None = None
         for file in self.files:
             parts_sz = len(file.path.parts)
             if parts_sz == 1:
-                return 0, None
+                log.debug("files at root, cannot strip root")
+                return None
             if ref is None:
                 ref = file.path.parts[0]
             else:
                 if ref != file.path.parts[0]:
-                    return 0, None
-        return 1, ref
+                    log.debug("multiple root components, cannot strip root")
+                    return None
+        return ref
 
     def verify_pieces(self, path: Path, /, strip_components: int = 0) -> bool:
         return verify_pieces(self, path, strip_components=strip_components)

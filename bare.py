@@ -4,10 +4,11 @@
 # ]
 # ///
 
-import libtorrent as lt
 import hashlib
 import os
 from typing import Tuple
+
+import libtorrent as lt
 
 
 def straightforward(

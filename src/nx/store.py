@@ -5,7 +5,7 @@ import types
 import typing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Protocol, TypedDict, runtime_checkable, Any
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 import structlog
 
@@ -13,6 +13,7 @@ from .nx import Torrent
 
 # AF42A720D65A556EB5CBE7DA5F0E0098379708C8
 MAGIC = hashlib.sha1("NXFS24757".encode()).hexdigest().upper()
+DefaultStorePathName = ".nx_store"
 
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
