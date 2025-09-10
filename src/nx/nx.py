@@ -176,11 +176,8 @@ def parse_torrent_buf(buffer: bytes) -> Torrent:
     )
 
 
-def parse_torrent(torrent_path: Path) -> Torrent:
+def parse_torrent(buffer: bytes) -> Torrent:
     log = logger.bind(method="parse_torrent")
-    log.info("invoked", torrent_path=torrent_path)
-
-    buffer = torrent_path.read_bytes()
     torrent = parse_torrent_buf(buffer)
     log.info("parsed", name=torrent.info.name())
     log.info("parsed files", files=torrent.files)

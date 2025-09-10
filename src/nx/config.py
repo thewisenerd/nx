@@ -2,9 +2,10 @@ from dataclasses import dataclass
 
 import structlog.stdlib
 import yaml
-from xdg_base_dirs import xdg_config_home
+from xdg_base_dirs import xdg_config_home, xdg_cache_home
 
 config_dir = xdg_config_home() / "nx"
+cache_dir = xdg_cache_home() / "nx"
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -34,6 +35,3 @@ def parse_config() -> Config:
         proxy = None
 
     return Config(proxy=proxy)
-
-
-config = parse_config()

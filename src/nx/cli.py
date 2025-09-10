@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import httpx
 import structlog
 from rich.console import Console
 
@@ -16,6 +17,7 @@ from .cli_helpers import (
 from .click_pathtype import PathType
 from .nx import Torrent, parse_torrent, parse_torrent_buf
 from .store import DefaultStorePathName, Repo, TorrentEntry
+from .config import cache_dir, parse_config
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -141,6 +143,93 @@ def _resolve_root(
     return store_path
 
 
+def _download_magnet(infohash: str) -> bytes:
+    config = parse_config()
+
+    logger.info(
+        "downloading magnet torrent from itorrents.org",
+        infohash=infohash,
+        proxy=config.proxy,
+    )
+
+    r = httpx.get(
+        f"https://itorrents.net/torrent/{infohash}.torrent", proxy=config.proxy
+    )
+    if r.status_code != 200:
+        click.echo(
+            f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}",
+            err=True,
+        )
+        raise click.Abort()
+    if r.content[0] != ord("d"):
+        click.echo(
+            f"invalid torrent file downloaded for magnet link: {infohash}",
+            err=True,
+        )
+        raise click.Abort()
+
+    return r.content
+
+
+def _parse_magnet(parsed: urllib.parse.ParseResult) -> str:
+    params = urllib.parse.parse_qs(parsed.query)
+    xt = params.get("xt", [])
+    if not xt:
+        click.echo("magnet link missing 'xt' parameter", err=True)
+        raise click.Abort()
+    parts = xt[0].split(":")
+    if len(parts) != 3 or parts[0] != "urn" or parts[1] != "btih":
+        click.echo("magnet link 'xt' parameter is not a valid btih urn", err=True)
+        raise click.Abort()
+    infohash = parts[2].upper()
+
+    if len(infohash) != 40:
+        click.echo("magnet link 'xt' infohash is not a valid SHA1 hash", err=True)
+        raise click.Abort()
+
+    return infohash
+
+
+def _parse_torrent(source: str) -> Torrent:
+    log = logger.bind(method="_parse_torrent", source=source)
+    parsed = urllib.parse.urlparse(source)
+
+    if parsed.scheme == "magnet":
+        infohash = _parse_magnet(parsed)
+
+        source_path = cache_dir / f"{infohash}.torrent"
+
+        torrent: Torrent
+        if not source_path.exists():
+            torrent_bytes = _download_magnet(infohash)
+            torrent = parse_torrent_buf(torrent_bytes)
+
+            # parsing success, write to cache now
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_bytes(torrent_bytes)
+        else:
+            torrent = parse_torrent(source_path.read_bytes())
+        return torrent
+    else:
+        if parsed.scheme == "file":
+            log.debug(
+                "identified file:// scheme", netloc=parsed.netloc, path=parsed.path
+            )
+            source_path = Path(urllib.parse.unquote(parsed.path))
+        else:
+            source_path = Path(parsed.path).expanduser()
+
+        if not source_path.exists():
+            click.echo(f"source does not exist: '{source}'", err=True)
+            raise click.Abort()
+        if not source_path.is_file():
+            click.echo(f"source is not a file: '{source}'", err=True)
+            raise click.Abort()
+
+        torrent: Torrent = parse_torrent(source_path.read_bytes())
+        return torrent
+
+
 @nx.command(help="add a torrent file to the store")
 @click.argument("source", type=PathType(allowed_extensions={".torrent"}))
 @click.option(
@@ -177,25 +266,7 @@ def add(
     )
     log.info("invoked")
 
-    parsed = urllib.parse.urlparse(source)
-    if parsed.scheme == "magnet":
-        log.warning("not supported yet")
-        click.echo("magnet links are not supported yet", err=True)
-        raise click.Abort()
-    if parsed.scheme == "file":
-        log.debug("identified file:// scheme", netloc=parsed.netloc, path=parsed.path)
-        source_path = Path(urllib.parse.unquote(parsed.path))
-    else:
-        source_path = Path(parsed.path).expanduser()
-
-    if not source_path.exists():
-        click.echo(f"source does not exist: '{source}'", err=True)
-        raise click.Abort()
-    if not source_path.is_file():
-        click.echo(f"source is not a file: '{source}'", err=True)
-        raise click.Abort()
-
-    torrent: Torrent = parse_torrent(source_path)
+    torrent = _parse_torrent(source)
 
     if auto_strip_root:
         if strip_components is not None:
@@ -368,7 +439,7 @@ def parse(source: Path, max_announce_count: int, max_files: int) -> None:
         click.echo(f"source does not exist: '{source}'", err=True)
         raise click.Abort()
 
-    torrent = parse_torrent(source)
+    torrent = parse_torrent(source.read_bytes())
     _print_torrent_info(console, torrent, max_announce_count, max_files)
 
 

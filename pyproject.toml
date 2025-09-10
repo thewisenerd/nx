@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "click>=8.2.1",
+    "httpx[socks]>=0.28.1",
     "libtorrent>=2.0.11",
     "pyyaml>=6.0.2",
     "rich>=14.1.0",
