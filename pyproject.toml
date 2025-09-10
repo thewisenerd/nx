@@ -10,9 +10,11 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.2.1",
     "libtorrent>=2.0.11",
+    "pyyaml>=6.0.2",
     "rich>=14.1.0",
     "structlog>=25.4.0",
     "tqdm>=4.67.1",
+    "xdg-base-dirs>=6.0.2",
 ]
 
 [project.scripts]
@@ -28,4 +30,5 @@ dev = [
     "pytest>=8.4.1",
     "ruff>=0.12.11",
     "types-libtorrent>=2.0.11.20250816",
+    "types-pyyaml>=6.0.12.20250822",
 ]

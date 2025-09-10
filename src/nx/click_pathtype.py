@@ -1,6 +1,5 @@
 import os
-from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from click import Context, Parameter, ParamType
 from click.shell_completion import CompletionItem
@@ -15,12 +14,12 @@ class PathType(ParamType):
 
     def convert(
         self, value: Any, param: Parameter | None, ctx: Context | None
-    ) -> Path | None:
+    ) -> str | None:
         if not value:
             # almost never would a user want "" to mean "."
             return None
 
-        return Path(value).expanduser()
+        return cast(str, value)
 
     def shell_complete(
         self, ctx: Context, param: Parameter, incomplete: str

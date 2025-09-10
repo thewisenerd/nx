@@ -1,5 +1,6 @@
 import os
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -161,7 +162,7 @@ def _resolve_root(
 @click.pass_context
 def add(
     ctx: click.Context,
-    source: Path,
+    source: str,
     strip_components: int | None,
     auto_strip_root: bool,
     force: bool,
@@ -176,14 +177,25 @@ def add(
     )
     log.info("invoked")
 
-    if not source.exists():
+    parsed = urllib.parse.urlparse(source)
+    if parsed.scheme == "magnet":
+        log.warning("not supported yet")
+        click.echo("magnet links are not supported yet", err=True)
+        raise click.Abort()
+    if parsed.scheme == "file":
+        log.debug("identified file:// scheme", netloc=parsed.netloc, path=parsed.path)
+        source_path = Path(urllib.parse.unquote(parsed.path))
+    else:
+        source_path = Path(parsed.path).expanduser()
+
+    if not source_path.exists():
         click.echo(f"source does not exist: '{source}'", err=True)
         raise click.Abort()
-    if not source.is_file():
+    if not source_path.is_file():
         click.echo(f"source is not a file: '{source}'", err=True)
         raise click.Abort()
 
-    torrent: Torrent = parse_torrent(source)
+    torrent: Torrent = parse_torrent(source_path)
 
     if auto_strip_root:
         if strip_components is not None:
