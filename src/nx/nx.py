@@ -112,6 +112,7 @@ class FileReader(Protocol):
 class DefaultFileReader:
     def __init__(self) -> None:
         self.refs: dict[str, io.BufferedReader] = {}
+        self.sizes: dict[str, int] = {}
 
     def __enter__(self) -> "DefaultFileReader":
         return self
@@ -131,9 +132,14 @@ class DefaultFileReader:
 
         if key not in self.refs:
             self.refs[key] = open(os.fspath(file), "rb")
+            self.sizes[key] = os.stat(os.fspath(file)).st_size
 
         fh = self.refs[key]
         fh.seek(r.start)
+
+        if r.stop >= self.sizes[key]:
+            logger.warning("eof reached", file=file, range=r)
+
         return fh.read(r.stop - r.start)
 
 
@@ -209,6 +215,10 @@ def _match_files(
                 )
             file_path = Path(*file_path.parts[strip_components:])
 
+        if file_path.parts and file_path.parts[0] == '.____padding_file':
+            logger.debug("skipping padding file", file=file)
+            continue
+
         full_path = save_path / file_path
 
         if not full_path.exists():
@@ -275,7 +285,11 @@ def verify_pieces(
                             )
                         file_path = Path(*file_path.parts[strip_components:])
 
-                    chunk = reader.read(save_path / file_path, r)
+                    if file_path.parts and file_path.parts[0] == '.____padding_file':
+                        chunk = b"\x00" * (r.stop - r.start)
+                    else:
+                        chunk = reader.read(save_path / file_path, r)
+
                     buf.extend(chunk)
                     bytes_read_this_piece += len(chunk)
 

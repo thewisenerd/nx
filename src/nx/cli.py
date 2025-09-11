@@ -433,13 +433,8 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
     default=26,
     help="maximum number of files to show per torrent (0 = show all)",
 )
-def parse(source: Path, max_announce_count: int, max_files: int) -> None:
-    """parse a torrent file and display its info"""
-    if not source.exists():
-        click.echo(f"source does not exist: '{source}'", err=True)
-        raise click.Abort()
-
-    torrent = parse_torrent(source.read_bytes())
+def parse(source: str, max_announce_count: int, max_files: int) -> None:
+    torrent = _parse_torrent(source)
     _print_torrent_info(console, torrent, max_announce_count, max_files)
 
 
