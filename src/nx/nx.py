@@ -18,6 +18,7 @@ from rich.progress import (
 )
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+_max_open_files = 32
 
 
 @dataclass
@@ -113,6 +114,7 @@ class DefaultFileReader:
     def __init__(self) -> None:
         self.refs: dict[str, io.BufferedReader] = {}
         self.sizes: dict[str, int] = {}
+        self.usage: dict[str, int] = {}
 
     def __enter__(self) -> "DefaultFileReader":
         return self
@@ -127,18 +129,41 @@ class DefaultFileReader:
         for ref in self.refs.values():
             ref.close()
 
+    def cleanup(self) -> None:
+        keys = list(self.usage.keys())
+        if len(keys) <= _max_open_files:
+            logger.debug("no cleanup needed", open_files=len(keys))
+            return
+
+        for idx, key in enumerate(keys):
+            if idx > 3:
+                break
+
+            if self.usage[key] > 0:
+                logger.debug("skipping busy file handle", file=key)
+                continue
+
+            logger.debug("closing file handle", file=key)
+            self.refs[key].close()
+            del self.refs[key]
+            del self.sizes[key]
+            del self.usage[key]
+
     def read(self, file: Path, r: range) -> bytes:
         key = os.fspath(file)
 
         if key not in self.refs:
+            self.cleanup()
+
             self.refs[key] = open(os.fspath(file), "rb")
             self.sizes[key] = os.stat(os.fspath(file)).st_size
+            self.usage[key] = self.usage.get(key, 0) + 1
 
         fh = self.refs[key]
         fh.seek(r.start)
 
         if r.stop >= self.sizes[key]:
-            logger.warning("eof reached", file=file, range=r)
+            self.usage[key] = self.usage.get(key, 0) - 1
 
         return fh.read(r.stop - r.start)
 
@@ -215,7 +240,7 @@ def _match_files(
                 )
             file_path = Path(*file_path.parts[strip_components:])
 
-        if file_path.parts and file_path.parts[0] == '.____padding_file':
+        if file_path.parts and file_path.parts[0] == ".____padding_file":
             logger.debug("skipping padding file", file=file)
             continue
 
@@ -285,7 +310,7 @@ def verify_pieces(
                             )
                         file_path = Path(*file_path.parts[strip_components:])
 
-                    if file_path.parts and file_path.parts[0] == '.____padding_file':
+                    if file_path.parts and file_path.parts[0] == ".____padding_file":
                         chunk = b"\x00" * (r.stop - r.start)
                     else:
                         chunk = reader.read(save_path / file_path, r)
