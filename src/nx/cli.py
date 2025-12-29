@@ -94,7 +94,7 @@ def _show_entries(
 
 
 def _resolve_root(
-    torrent: Torrent, store_path: Path | None, root_ref: str
+    torrent: Torrent, store_path: Path | None, root_ref: str, force: bool
 ) -> Path | None:
     log = logger.bind(method="_resolve_root", id=torrent.infohash, root_ref=root_ref)
 
@@ -127,6 +127,13 @@ def _resolve_root(
 
     # candidate 3, we need a root ref, but it doesn't exist yet..
     if candidate.parent.exists() and candidate.parent.is_dir():
+        if not force:
+            click.echo(
+                f"root-ref directory does not exist: '{candidate}', use -f to create",
+                err=True,
+            )
+            raise click.Abort()
+
         console.print("creating directory ", end="")
         console.print(
             candidate.name, style="yellow", markup=False, highlight=False, end=""
@@ -278,7 +285,7 @@ def add(
 
         if root_ref:
             strip_components = 1
-            store_path = _resolve_root(torrent, store_path, root_ref)
+            store_path = _resolve_root(torrent, store_path, root_ref, force)
         else:
             if not force:
                 click.echo(
