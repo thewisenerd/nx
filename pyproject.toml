@@ -14,7 +14,6 @@ dependencies = [
     "pyyaml>=6.0.2",
     "rich>=14.1.0",
     "structlog>=25.4.0",
-    "tqdm>=4.67.1",
     "xdg-base-dirs>=6.0.2",
 ]
 
