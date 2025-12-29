@@ -2,6 +2,7 @@ import hashlib
 import io
 import os
 import types
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Protocol, runtime_checkable
@@ -217,6 +218,32 @@ def parse_torrent(buffer: bytes) -> Torrent:
     return torrent
 
 
+def _resolve_path_with_normalization(root: Path, path: Path) -> Path | None:
+    """
+    a macOS file rsync'ed may have the wrong encoding.
+    be liberal in the path matching.
+
+    TODO: we can "fix" this ourselves, but can/should we?
+    """
+    full_path = root / path
+    if full_path.exists():
+        return full_path
+
+    # try NFD normalization (macOS filesystem uses this)
+    nfd_path = root / Path(unicodedata.normalize("NFD", str(path)))
+    if nfd_path.exists():
+        logger.warning("unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.", path=str(path), form="NFD")
+        return nfd_path
+
+    # try NFC normalization
+    nfc_path = root / Path(unicodedata.normalize("NFC", str(path)))
+    if nfc_path.exists():
+        logger.warning("unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.", path=str(path), form="NFC")
+        return nfc_path
+
+    return None
+
+
 def _match_files(
     torrent: Torrent,
     save_path: Path,
@@ -244,12 +271,12 @@ def _match_files(
             logger.debug("skipping padding file", file=file)
             continue
 
-        full_path = save_path / file_path
+        resolved_path = _resolve_path_with_normalization(save_path, file_path)
 
-        if not full_path.exists():
+        if resolved_path is None:
             missing.add(file.path)
         else:
-            if full_path.is_file():
+            if resolved_path.is_file():
                 found.add(file.path)
             else:
                 error.add(file.path)
@@ -313,7 +340,14 @@ def verify_pieces(
                     if file_path.parts and file_path.parts[0] == ".____padding_file":
                         chunk = b"\x00" * (r.stop - r.start)
                     else:
-                        chunk = reader.read(save_path / file_path, r)
+                        resolved_path = _resolve_path_with_normalization(
+                            save_path, file_path
+                        )
+                        if resolved_path is None:
+                            raise FileNotFoundError(
+                                f"file not found: {save_path / file_path}"
+                            )
+                        chunk = reader.read(resolved_path, r)
 
                     buf.extend(chunk)
                     bytes_read_this_piece += len(chunk)

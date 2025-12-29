@@ -36,7 +36,8 @@ entries:
 
 in the case of single-file torrents, we want the store to be _beside_ the file.
 
-single-file torrents require `-f`/`--here` to explicitly confirm the store location.
+single-file torrents require `-f`/`--here` to explicitly confirm the store
+location.
 
 ```
   big_buck_bunny_1080p_h264.mov
@@ -152,6 +153,14 @@ Options:
 # use proxy for http operations
 # proxy: "socks5://10.64.0.1:1080"
 ```
+
+### verify
+
+- macOS files with unicode characters are NFD while linux/torrents are typically
+  NFC?
+    - a file rsync'ed from a macOS machine may have the wrong encoding
+    - we may introduce a `--fix` option to allow verify to automatically fix
+      this but it would be a misnomer
 
 ### sync
 

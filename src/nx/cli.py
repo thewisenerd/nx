@@ -37,7 +37,14 @@ def _get_store_path(ctx: click.Context) -> Path | None:
 
 
 @click.group(invoke_without_command=True)
-@click.option("-C", "--root", type=str, default=None, metavar="PATH", help="operate in this directory")
+@click.option(
+    "-C",
+    "--root",
+    type=str,
+    default=None,
+    metavar="PATH",
+    help="operate in this directory",
+)
 @click.option(
     "--max-announce-count",
     type=click.IntRange(min=0),
@@ -57,7 +64,9 @@ def nx(
     ctx: click.Context, root: str | None, max_announce_count: int, max_files: int
 ) -> None:
     ctx.ensure_object(dict)
-    ctx.obj[ctx_keys["store_path"]] = Path(root).absolute() / DefaultStorePathName if root else None
+    ctx.obj[ctx_keys["store_path"]] = (
+        Path(root).absolute() / DefaultStorePathName if root else None
+    )
     ctx.obj[ctx_keys["max_announce_count"]] = max_announce_count
     ctx.obj[ctx_keys["max_files"]] = max_files
 
@@ -93,9 +102,7 @@ def _show_entries(
                 )
 
 
-def _resolve_root(
-    torrent: Torrent, store_path: Path | None, root_ref: str
-) -> Path:
+def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> Path:
     log = logger.bind(method="_resolve_root", id=torrent.infohash, root_ref=root_ref)
 
     search = store_path.parent if store_path else _default_store_path.parent
@@ -140,9 +147,7 @@ def _resolve_root(
         log.info("creating root-ref", new_store_path=new_store_path)
         return new_store_path
 
-    click.echo(
-        f"cannot resolve root directory: '{candidate}'", err=True
-    )
+    click.echo(f"cannot resolve root directory: '{candidate}'", err=True)
     raise click.Abort()
 
 
@@ -271,6 +276,7 @@ def add(
     else:
         # auto-detect: try to resolve root directory
         if is_multi_file:
+            assert root_ref is not None
             store_path = _resolve_root(torrent, store_path, root_ref)
         else:
             click.echo(
@@ -359,6 +365,7 @@ def _verify_single_torrent(repo: Repo, entry: TorrentEntry) -> None:
     click.echo(f"verifying {entry.id[:8]}...")
 
     strip_components = entry.nx["@internal"].strip_components
+
     matches = torrent.matches(repo.save_path, strip_components=strip_components)
 
     if not matches.ok:
