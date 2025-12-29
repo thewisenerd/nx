@@ -36,8 +36,7 @@ entries:
 
 in the case of single-file torrents, we want the store to be _beside_ the file.
 
-to prevent accidental store creations, you may not `nx add` a single-file
-torrent without also specifying `-f`.
+single-file torrents require `-f`/`--here` to explicitly confirm the store location.
 
 ```
   big_buck_bunny_1080p_h264.mov
@@ -66,7 +65,7 @@ directory
 Usage: nx [OPTIONS] COMMAND [ARGS]...
 
 Options:
-  -s, --store OPTIONAL            use a specific store file
+  -C, --root PATH                 operate in this directory
   --max-announce-count INTEGER RANGE
                                   maximum number of announce urls to show per
                                   torrent (0 = show all)  [x>=0]
@@ -111,34 +110,28 @@ Usage: nx add [OPTIONS] SOURCE
   add a torrent file to the store
 
 Options:
-  --strip-components OPTIONAL     number of path components to strip when
-                                  adding files
-  --auto-strip-root / --no-auto-strip-root
-                                  automatically strip root directory and
-                                  resolve store path
-  -f, --force                     force addition in specific cases
-  --help                          Show this message and exit.
+  -f, --here  use current directory as root
+  --help      Show this message and exit.
 ```
 
 `nx add path/to/file.torrent`
 
-`nx add "magnet:?xt=urn:btih:..."` (TODO)
+`nx add "magnet:?xt=urn:btih:..."`
 
 ### verify
 
 ```
-Usage: nx verify [OPTIONS] [IDENTIFIER]
+Usage: nx verify [IDENTIFIER]
 
-  verify the files for a torrent by its identifier (prefix)
+  verify torrents (all if no identifier given)
 
 Options:
-  -a, --all  verify all torrents
-  --help     Show this message and exit.
+  --help  Show this message and exit.
 ```
 
-`nx verify {id}`
+`nx verify` — verify all
 
-`nx verify -a|--all`
+`nx verify {id}` — verify by prefix
 
 ## TODO
 
@@ -146,11 +139,6 @@ Options:
 
 - [ ] magnet support
     - [ ] simply fetch from iTorrents.org cache to start
-
-### verify
-
-- [ ] switch to verify all by default if only one entry exists; need identifier
-  or `-a` if multiple entries exist
 
 ### config
 

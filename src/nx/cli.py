@@ -1,8 +1,6 @@
-import os
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Optional
 
 import click
 import httpx
@@ -39,25 +37,27 @@ def _get_store_path(ctx: click.Context) -> Path | None:
 
 
 @click.group(invoke_without_command=True)
-@click.option("-s", "--store", type=Optional[str], help="use a specific store file")
+@click.option("-C", "--root", type=str, default=None, metavar="PATH", help="operate in this directory")
 @click.option(
     "--max-announce-count",
     type=click.IntRange(min=0),
     default=3,
+    show_default=True,
     help="maximum number of announce urls to show per torrent (0 = show all)",
 )
 @click.option(
     "--max-files",
     type=click.IntRange(min=0),
     default=26,
+    show_default=True,
     help="maximum number of files to show per torrent (0 = show all)",
 )
 @click.pass_context
 def nx(
-    ctx: click.Context, store: str | None, max_announce_count: int, max_files: int
+    ctx: click.Context, root: str | None, max_announce_count: int, max_files: int
 ) -> None:
     ctx.ensure_object(dict)
-    ctx.obj[ctx_keys["store_path"]] = Path(store).absolute() if store else None
+    ctx.obj[ctx_keys["store_path"]] = Path(root).absolute() / DefaultStorePathName if root else None
     ctx.obj[ctx_keys["max_announce_count"]] = max_announce_count
     ctx.obj[ctx_keys["max_files"]] = max_files
 
@@ -94,18 +94,19 @@ def _show_entries(
 
 
 def _resolve_root(
-    torrent: Torrent, store_path: Path | None, root_ref: str, force: bool
-) -> Path | None:
+    torrent: Torrent, store_path: Path | None, root_ref: str
+) -> Path:
     log = logger.bind(method="_resolve_root", id=torrent.infohash, root_ref=root_ref)
 
     search = store_path.parent if store_path else _default_store_path.parent
     log.info("invoked", search=search)
 
-    # candidate 1, we are "in" the 'root_ref' directory
+    # case 1: we are "in" the root_ref directory
     if search.parts[-1] == root_ref:
         log.info("in root-ref")
-        return store_path
+        return store_path if store_path else _default_store_path
 
+    # case 2: we are "above" the root_ref directory
     candidate = search / root_ref
     if candidate.exists():
         if not candidate.is_dir():
@@ -125,15 +126,8 @@ def _resolve_root(
 
         return new_store_path
 
-    # candidate 3, we need a root ref, but it doesn't exist yet..
+    # case 3: root_ref directory doesn't exist, create it
     if candidate.parent.exists() and candidate.parent.is_dir():
-        if not force:
-            click.echo(
-                f"root-ref directory does not exist: '{candidate}', use -f to create",
-                err=True,
-            )
-            raise click.Abort()
-
         console.print("creating directory ", end="")
         console.print(
             candidate.name, style="yellow", markup=False, highlight=False, end=""
@@ -141,13 +135,15 @@ def _resolve_root(
         console.print("")
 
         candidate.mkdir(exist_ok=True)
-        os.chdir(candidate)
 
         new_store_path = candidate / DefaultStorePathName
         log.info("creating root-ref", new_store_path=new_store_path)
         return new_store_path
 
-    return store_path
+    click.echo(
+        f"cannot resolve root directory: '{candidate}'", err=True
+    )
+    raise click.Abort()
 
 
 def _download_magnet(infohash: str) -> bytes:
@@ -240,61 +236,50 @@ def _parse_torrent(source: str) -> Torrent:
 @nx.command(help="add a torrent file to the store")
 @click.argument("source", type=PathType(allowed_extensions={".torrent"}))
 @click.option(
-    "--strip-components",
-    type=Optional[int],
-    help="number of path components to strip when adding files",
-)
-@click.option(
-    "--auto-strip-root/--no-auto-strip-root",
-    default=True,
-    help="automatically strip root directory and resolve store path",
-)
-@click.option(
     "-f",
-    "--force",
+    "--here",
     is_flag=True,
-    help="force addition in specific cases",
+    help="use current directory as root",
 )
 @click.pass_context
 def add(
     ctx: click.Context,
     source: str,
-    strip_components: int | None,
-    auto_strip_root: bool,
-    force: bool,
+    here: bool,
 ) -> None:
     store_path: Path | None = _get_store_path(ctx)
     log = logger.bind(
         method="add",
         store=store_path,
         source=source,
-        strip_components=strip_components,
-        auto_strip_root=auto_strip_root,
+        here=here,
     )
     log.info("invoked")
 
     torrent = _parse_torrent(source)
 
-    if auto_strip_root:
-        if strip_components is not None:
-            click.echo("cannot use --strip-components with --auto-strip-root", err=True)
+    # determine strip_components from torrent structure
+    root_ref = torrent.strip_root()
+    is_multi_file = root_ref is not None
+    strip_components = 1 if is_multi_file else 0
+
+    if here:
+        # user says "trust me, store goes here"
+        log.info("using current directory as root", is_multi_file=is_multi_file)
+        if store_path is None:
+            store_path = _default_store_path
+    else:
+        # auto-detect: try to resolve root directory
+        if is_multi_file:
+            store_path = _resolve_root(torrent, store_path, root_ref)
+        else:
+            click.echo(
+                "single-file torrent requires -f/--here to specify store location",
+                err=True,
+            )
             raise click.Abort()
 
-        root_ref = torrent.strip_root()
-        log.info("auto-strip-root", root_ref=root_ref)
-
-        if root_ref:
-            strip_components = 1
-            store_path = _resolve_root(torrent, store_path, root_ref, force)
-        else:
-            if not force:
-                click.echo(
-                    "torrent has no root-ref, use -f to force addition",
-                    err=True,
-                )
-                raise click.Abort()
-
-    entry = TorrentEntry.from_torrent(torrent, strip_components or 0)
+    entry = TorrentEntry.from_torrent(torrent, strip_components)
 
     resolved_store_path: Path = store_path if store_path else _default_store_path
     with Repo(resolved_store_path) as repo:
@@ -330,23 +315,12 @@ def add(
 
 @nx.command()
 @click.argument("identifier", required=False)
-@click.option("-a", "--all", "verify_all", is_flag=True, help="verify all torrents")
 @click.pass_context
-def verify(ctx: click.Context, identifier: str | None, verify_all: bool) -> None:
-    """verify the files for a torrent by its identifier (prefix)"""
+def verify(ctx: click.Context, identifier: str | None) -> None:
+    """verify torrents (all if no identifier given)"""
     store_path: Path | None = _get_store_path(ctx)
-    log = logger.bind(
-        method="verify", store=store_path, identifier=identifier, verify_all=verify_all
-    )
+    log = logger.bind(method="verify", store=store_path, identifier=identifier)
     log.info("invoked")
-
-    if not identifier and not verify_all:
-        click.echo("must specify either an identifier or --all", err=True)
-        raise click.Abort()
-
-    if identifier and verify_all:
-        click.echo("cannot specify both identifier and --all", err=True)
-        raise click.Abort()
 
     resolved_store_path: Path = store_path if store_path else _default_store_path
     with Repo(resolved_store_path) as repo:
@@ -354,10 +328,10 @@ def verify(ctx: click.Context, identifier: str | None, verify_all: bool) -> None
             click.echo("no entries found")
             return
 
-        if verify_all:
-            _verify_all_torrents(repo)
+        if identifier:
+            _verify_torrent_by_id(repo, identifier)
         else:
-            _verify_torrent_by_id(repo, identifier or "")
+            _verify_all_torrents(repo)
 
 
 def _verify_torrent_by_id(repo: Repo, identifier: str) -> None:
@@ -391,6 +365,8 @@ def _verify_single_torrent(repo: Repo, entry: TorrentEntry) -> None:
         click.echo(f"files missing or invalid for {entry.id[:8]}", err=True)
         if matches.missing:
             click.echo(f"missing: {len(matches.missing)} files", err=True)
+            for path in matches.missing:
+                click.echo(f"  {path}", err=True)
         if matches.error:
             click.echo(f"errors: {len(matches.error)} files", err=True)
         return
@@ -426,7 +402,7 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
         raise click.Abort()
 
 
-@nx.command()
+@nx.command(help="parse a torrent file and display its info")
 @click.argument("source", type=PathType(allowed_extensions={".torrent"}))
 @click.option(
     "--max-announce-count",
@@ -441,6 +417,7 @@ def _find_entry_by_prefix(repo: Repo, identifier: str) -> TorrentEntry | None:
     help="maximum number of files to show per torrent (0 = show all)",
 )
 def parse(source: str, max_announce_count: int, max_files: int) -> None:
+    """parse a torrent file and display its info"""
     torrent = _parse_torrent(source)
     _print_torrent_info(console, torrent, max_announce_count, max_files)
 
