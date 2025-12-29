@@ -15,9 +15,9 @@ from .cli_helpers import (
     _print_torrent_info,
 )
 from .click_pathtype import PathType
+from .config import cache_dir, parse_config
 from .nx import Torrent, parse_torrent, parse_torrent_buf
 from .store import DefaultStorePathName, Repo, TorrentEntry
-from .config import cache_dir, parse_config
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -194,12 +194,12 @@ def _parse_torrent(source: str) -> Torrent:
     log = logger.bind(method="_parse_torrent", source=source)
     parsed = urllib.parse.urlparse(source)
 
+    torrent: Torrent
     if parsed.scheme == "magnet":
         infohash = _parse_magnet(parsed)
 
         source_path = cache_dir / f"{infohash}.torrent"
 
-        torrent: Torrent
         if not source_path.exists():
             torrent_bytes = _download_magnet(infohash)
             torrent = parse_torrent_buf(torrent_bytes)
@@ -209,7 +209,6 @@ def _parse_torrent(source: str) -> Torrent:
             source_path.write_bytes(torrent_bytes)
         else:
             torrent = parse_torrent(source_path.read_bytes())
-        return torrent
     else:
         if parsed.scheme == "file":
             log.debug(
@@ -226,8 +225,9 @@ def _parse_torrent(source: str) -> Torrent:
             click.echo(f"source is not a file: '{source}'", err=True)
             raise click.Abort()
 
-        torrent: Torrent = parse_torrent(source_path.read_bytes())
-        return torrent
+        torrent = parse_torrent(source_path.read_bytes())
+
+    return torrent
 
 
 @nx.command(help="add a torrent file to the store")

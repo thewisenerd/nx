@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import structlog.stdlib
 import yaml
-from xdg_base_dirs import xdg_config_home, xdg_cache_home
+from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
 config_dir = xdg_config_home() / "nx"
 cache_dir = xdg_cache_home() / "nx"
