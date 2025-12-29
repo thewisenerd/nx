@@ -7,4 +7,7 @@ format:
 lint:
 	uv run ty check
 
-.PHONY: default format lint
+install-shim:
+	uv tool install -p 3.13 --editable .
+
+.PHONY: default format lint install-shim
