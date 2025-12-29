@@ -15,7 +15,7 @@ if __name__ == "__main__":
     # print(torr)
 
     torr = parse_torrent(
-        Path("../samples/works_poe_raven_edition_vol2_0912_archive.torrent"),
+        Path("../samples/works_poe_raven_edition_vol2_0912_archive.torrent").read_bytes(),
     )
 
     with Repo(Path(DefaultStorePathName)) as repo:

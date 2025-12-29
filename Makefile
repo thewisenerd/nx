@@ -5,6 +5,6 @@ format:
 	uv run ruff check --extend-select I --fix
 
 lint:
-	uv run mypy --strict src/nx
+	uv run ty check
 
 .PHONY: default format lint
