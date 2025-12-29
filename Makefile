@@ -17,4 +17,8 @@ bump:
 	git commit -m "v$$(uv version --short)"
 	git tag "v$$(uv version --short)"
 
-.PHONY: default format lint install-shim bump
+build:
+	uv build
+	[[ -n "$$NX_PUBLISH_HOST" ]] && scp dist/nx-$$(uv version --short).tar.gz "$$NX_PUBLISH_HOST:static/nx/" || true
+
+.PHONY: default format lint install-shim bump build
