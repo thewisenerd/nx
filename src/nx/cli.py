@@ -164,10 +164,13 @@ def _download_magnet(infohash: str) -> bytes:
         f"https://itorrents.net/torrent/{infohash}.torrent", proxy=config.proxy
     )
     if r.status_code != 200:
-        click.echo(
-            f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}",
-            err=True,
-        )
+        if r.status_code == 302:
+            click.echo(f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}, location={r.headers['location']}")
+        else:
+            click.echo(
+                f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}",
+                err=True,
+            )
         raise click.Abort()
     if r.content[0] != ord("d"):
         click.echo(
