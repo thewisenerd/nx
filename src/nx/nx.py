@@ -218,6 +218,10 @@ def parse_torrent(buffer: bytes) -> Torrent:
     return torrent
 
 
+def _is_padding_path(path: Path) -> bool:
+    return bool(path.parts) and path.parts[0] in {".____padding_file", ".pad"}
+
+
 def _resolve_path_with_normalization(root: Path, path: Path) -> Path | None:
     """
     a macOS file rsync'ed may have the wrong encoding.
@@ -267,7 +271,7 @@ def _match_files(
                 )
             file_path = Path(*file_path.parts[strip_components:])
 
-        if file_path.parts and file_path.parts[0] == ".____padding_file":
+        if _is_padding_path(file_path):
             logger.debug("skipping padding file", file=file)
             continue
 
@@ -337,7 +341,7 @@ def verify_pieces(
                             )
                         file_path = Path(*file_path.parts[strip_components:])
 
-                    if file_path.parts and file_path.parts[0] == ".____padding_file":
+                    if _is_padding_path(file_path):
                         chunk = b"\x00" * (r.stop - r.start)
                     else:
                         resolved_path = _resolve_path_with_normalization(
