@@ -117,7 +117,9 @@ Options:
 
 `nx add path/to/file.torrent`
 
-`nx add "magnet:?xt=urn:btih:..."`
+`nx add "magnet:?xt=urn:btih:..."` / `nx add "magnet://{hash}"` (short-hand)
+
+`nx add "https://example.com/path.torrent"`
 
 ### verify
 
