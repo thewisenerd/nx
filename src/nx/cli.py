@@ -151,35 +151,57 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
     raise click.Abort()
 
 
-def _download_magnet(infohash: str) -> bytes:
+_max_torrent_download_size = 16 * 1024 * 1024
+
+
+def _download_torrent_url(url: str, /, label: str) -> bytes:
     config = parse_config()
 
-    logger.info(
-        "downloading magnet torrent from itorrents.org",
-        infohash=infohash,
-        proxy=config.proxy,
-    )
+    logger.info("downloading torrent", url=url, proxy=config.proxy)
 
-    r = httpx.get(
-        f"https://itorrents.net/torrent/{infohash}.torrent", proxy=config.proxy
-    )
-    if r.status_code != 200:
-        if r.status_code == 302:
-            click.echo(f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}, location={r.headers['location']}")
-        else:
-            click.echo(
-                f"failed to download torrent for magnet link: {infohash}, status_code={r.status_code}",
-                err=True,
-            )
-        raise click.Abort()
-    if r.content[0] != ord("d"):
-        click.echo(
-            f"invalid torrent file downloaded for magnet link: {infohash}",
-            err=True,
-        )
+    buffer = bytearray()
+    try:
+        with httpx.stream(
+            "GET", url, proxy=config.proxy, follow_redirects=True
+        ) as response:
+            if response.status_code != 200:
+                click.echo(
+                    f"failed to download torrent for {label}: status_code={response.status_code}",
+                    err=True,
+                )
+                raise click.Abort()
+
+            for chunk in response.iter_bytes():
+                if not chunk:
+                    continue
+
+                if not buffer and chunk[0] != ord("d"):
+                    click.echo(f"invalid torrent file downloaded for {label}", err=True)
+                    raise click.Abort()
+
+                buffer.extend(chunk)
+                if len(buffer) > _max_torrent_download_size:
+                    click.echo(
+                        f"torrent file too large for {label}: max_size={_max_torrent_download_size}",
+                        err=True,
+                    )
+                    raise click.Abort()
+    except httpx.HTTPError as error:
+        click.echo(f"failed to download torrent for {label}: {error}", err=True)
+        raise click.Abort() from error
+
+    if not buffer:
+        click.echo(f"empty torrent file downloaded for {label}", err=True)
         raise click.Abort()
 
-    return r.content
+    return bytes(buffer)
+
+
+def _download_magnet(infohash: str) -> bytes:
+    return _download_torrent_url(
+        f"https://itorrents.net/torrent/{infohash}.torrent",
+        label=f"magnet link: {infohash}",
+    )
 
 
 def _parse_magnet(parsed: urllib.parse.ParseResult) -> str:
@@ -220,6 +242,9 @@ def _parse_torrent(source: str) -> Torrent:
             source_path.write_bytes(torrent_bytes)
         else:
             torrent = parse_torrent(source_path.read_bytes())
+    elif parsed.scheme in {"http", "https"}:
+        torrent_bytes = _download_torrent_url(source, label=source)
+        torrent = parse_torrent_buf(torrent_bytes)
     else:
         if parsed.scheme == "file":
             log.debug(
