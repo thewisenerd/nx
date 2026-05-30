@@ -304,23 +304,47 @@ def _download_magnet(infohash: str) -> bytes:
     )
 
 
+def _parse_sha1_infohash(value: str, label: str) -> str:
+    infohash = value.upper()
+    if len(infohash) != 40:
+        click.echo(f"{label} is not a valid SHA1 infohash", err=True)
+        raise click.Abort()
+
+    try:
+        bytes.fromhex(infohash)
+    except ValueError:
+        click.echo(f"{label} is not a valid SHA1 infohash", err=True)
+        raise click.Abort()
+
+    return infohash
+
+
 def _parse_magnet(parsed: urllib.parse.ParseResult) -> str:
+    if parsed.netloc:
+        if parsed.path or parsed.params or parsed.query or parsed.fragment:
+            click.echo("invalid magnet shorthand form", err=True)
+            raise click.Abort()
+        return _parse_sha1_infohash(parsed.netloc, "magnet link infohash")
+
+    if parsed.path or parsed.params or parsed.fragment:
+        click.echo("invalid magnet link", err=True)
+        raise click.Abort()
+
     params = urllib.parse.parse_qs(parsed.query)
     xt = params.get("xt", [])
     if not xt:
         click.echo("magnet link missing 'xt' parameter", err=True)
         raise click.Abort()
+    if len(xt) != 1:
+        click.echo("magnet link must contain exactly one 'xt' parameter", err=True)
+        raise click.Abort()
+
     parts = xt[0].split(":")
     if len(parts) != 3 or parts[0] != "urn" or parts[1] != "btih":
         click.echo("magnet link 'xt' parameter is not a valid btih urn", err=True)
         raise click.Abort()
-    infohash = parts[2].upper()
 
-    if len(infohash) != 40:
-        click.echo("magnet link 'xt' infohash is not a valid SHA1 hash", err=True)
-        raise click.Abort()
-
-    return infohash
+    return _parse_sha1_infohash(parts[2], "magnet link 'xt' infohash")
 
 
 def _parse_torrent(source: str) -> Torrent:
