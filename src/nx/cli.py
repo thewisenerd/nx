@@ -16,6 +16,7 @@ from .cli_helpers import (
 from .click_pathtype import PathType
 from .config import cache_dir, parse_config
 from .nx import Torrent, parse_torrent, parse_torrent_buf
+from .redact import build_redaction_rules, redact_torrent_buffer
 from .store import DefaultStorePathName, Repo, TorrentEntry, load
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
@@ -389,6 +390,12 @@ def add(
     log.info("invoked")
 
     torrent = _parse_torrent(source)
+    config = parse_config()
+    redacted_buffer = redact_torrent_buffer(
+        torrent.buffer, build_redaction_rules(config.redactions)
+    )
+    if redacted_buffer != torrent.buffer:
+        torrent = parse_torrent_buf(redacted_buffer)
 
     # determine strip_components from torrent structure
     root_ref = torrent.strip_root()

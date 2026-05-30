@@ -5,7 +5,9 @@ from rich.console import Console
 from rich.tree import Tree
 
 from .cli_helpers_tree import _add_files_to_tree, _format_size
+from .config import parse_config
 from .nx import Torrent, parse_torrent_buf
+from .redact import build_redaction_rules, redact_announce_url
 from .store import TorrentEntry
 
 
@@ -47,13 +49,14 @@ def _add_torrent_info_to_tree(
     # Announce section
     if torrent.trackers:
         announce_branch = parent_branch.add("[yellow]announce[/yellow]")
+        redaction_rules = build_redaction_rules(parse_config().redactions)
 
         trackers_to_show = torrent.trackers
         if max_announce_count > 0:
             trackers_to_show = torrent.trackers[:max_announce_count]
 
         for tracker in trackers_to_show:
-            announce_branch.add(tracker.url)
+            announce_branch.add(redact_announce_url(tracker.url, redaction_rules))
 
         if 0 < max_announce_count < len(torrent.trackers):
             remaining = len(torrent.trackers) - max_announce_count
