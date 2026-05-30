@@ -1,5 +1,6 @@
 import time
 import urllib.parse
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import click
@@ -15,7 +16,7 @@ from .cli_helpers import (
 from .click_pathtype import PathType
 from .config import cache_dir, parse_config
 from .nx import Torrent, parse_torrent, parse_torrent_buf
-from .store import DefaultStorePathName, Repo, TorrentEntry
+from .store import DefaultStorePathName, Repo, TorrentEntry, load
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -25,10 +26,16 @@ _default_store_path = Path(DefaultStorePathName).absolute()
 console = Console()
 
 ctx_keys = {
+    "root_path": "root_path",
     "store_path": "store_path",
     "max_announce_count": "max_announce_count",
     "max_files": "max_files",
 }
+
+
+def _get_root_path(ctx: click.Context) -> Path:
+    root: Path = ctx.obj[ctx_keys["root_path"]]
+    return root
 
 
 def _get_store_path(ctx: click.Context) -> Path | None:
@@ -64,9 +71,9 @@ def nx(
     ctx: click.Context, root: str | None, max_announce_count: int, max_files: int
 ) -> None:
     ctx.ensure_object(dict)
-    ctx.obj[ctx_keys["store_path"]] = (
-        Path(root).absolute() / DefaultStorePathName if root else None
-    )
+    root_path = Path(root).absolute() if root else Path.cwd()
+    ctx.obj[ctx_keys["root_path"]] = root_path
+    ctx.obj[ctx_keys["store_path"]] = root_path / DefaultStorePathName if root else None
     ctx.obj[ctx_keys["max_announce_count"]] = max_announce_count
     ctx.obj[ctx_keys["max_files"]] = max_files
 
@@ -149,6 +156,98 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
 
     click.echo(f"cannot resolve root directory: '{candidate}'", err=True)
     raise click.Abort()
+
+
+def _iter_dirs_at_depth(root: Path, depth: int) -> Iterator[Path]:
+    directories = [root]
+
+    for _ in range(depth):
+        directories = [
+            child
+            for directory in directories
+            for child in sorted(directory.iterdir())
+            if child.is_dir()
+        ]
+
+    yield from directories
+
+
+def _is_valid_store(store_path: Path) -> bool:
+    try:
+        load(store_path, ignore_checksum=False)
+        return True
+    except Exception:
+        return False
+
+
+def _iter_nested_store_roots(root: Path) -> Iterator[Path]:
+    for store_path in sorted(root.rglob(DefaultStorePathName)):
+        if store_path.parent == root:
+            continue
+        if _is_valid_store(store_path):
+            yield store_path.parent
+
+
+def _create_lint_path_formatter(root: Path) -> Callable[[Path], Path]:
+    if root.resolve() != Path.cwd().resolve():
+        return lambda path: path
+
+    def format_relative_to_root(path: Path) -> Path:
+        relative_path = path.relative_to(root)
+        if not relative_path.parts:
+            return Path(".")
+        return relative_path
+
+    return format_relative_to_root
+
+
+@nx.command(help="lint directories for missing or unverified stores")
+@click.option(
+    "-d",
+    "--depth",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="directory depth to lint",
+)
+@click.pass_context
+def lint(ctx: click.Context, depth: int) -> None:
+    root = _get_root_path(ctx)
+    format_path = _create_lint_path_formatter(root)
+    found_errors = False
+
+    for directory in _iter_dirs_at_depth(root, depth):
+        store_path = directory / DefaultStorePathName
+        if not store_path.exists():
+            display_path = format_path(directory)
+            click.echo(f"{display_path}: error: missing-store: missing .nx_store")
+            found_errors = True
+            continue
+
+        store = load(store_path, ignore_checksum=False)
+        unverified_count = sum(
+            1
+            for entry in store.entries
+            if isinstance(entry, TorrentEntry) and not entry.nx["@internal"].ready
+        )
+        if unverified_count > 0:
+            noun = "entry" if unverified_count == 1 else "entries"
+            display_path = format_path(directory)
+            click.echo(
+                f"{display_path}: error: unverified: {unverified_count} torrent {noun} not verified"
+            )
+            found_errors = True
+
+        for nested_root in _iter_nested_store_roots(directory):
+            display_path = format_path(nested_root)
+            display_parent = format_path(directory)
+            click.echo(
+                f"{display_path}: error: nested-store: valid .nx_store nested under {display_parent}"
+            )
+            found_errors = True
+
+    if found_errors:
+        ctx.exit(1)
 
 
 _max_torrent_download_size = 16 * 1024 * 1024
