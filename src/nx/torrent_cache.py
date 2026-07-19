@@ -51,7 +51,9 @@ class TorrageSource:
 
     def fetch(self, infohash: str) -> bytes:
         config = parse_config()
-        landing_url = f"{self.base_url}/torrent.php?{urllib.parse.urlencode({'h': infohash})}"
+        landing_url = (
+            f"{self.base_url}/torrent.php?{urllib.parse.urlencode({'h': infohash})}"
+        )
         headers = {"User-Agent": "Mozilla/5.0"}
 
         try:
@@ -149,7 +151,7 @@ def default_torrent_cache_sources() -> list[TorrentCacheSource]:
 
 
 def download_from_cache(
-    infohash: str, /, *, validate: Callable[[bytes], None] | None = None
+    infohash: str, /, *, validate: Callable[[bytes], object] | None = None
 ) -> bytes:
     failures: list[str] = []
 

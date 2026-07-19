@@ -236,13 +236,21 @@ def _resolve_path_with_normalization(root: Path, path: Path) -> Path | None:
     # try NFD normalization (macOS filesystem uses this)
     nfd_path = root / Path(unicodedata.normalize("NFD", str(path)))
     if nfd_path.exists():
-        logger.warning("unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.", path=str(path), form="NFD")
+        logger.warning(
+            "unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.",
+            path=str(path),
+            form="NFD",
+        )
         return nfd_path
 
     # try NFC normalization
     nfc_path = root / Path(unicodedata.normalize("NFC", str(path)))
     if nfc_path.exists():
-        logger.warning("unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.", path=str(path), form="NFC")
+        logger.warning(
+            "unicode normalization mismatch. use https://github.com/cr0sh/jaso to possibly fix.",
+            path=str(path),
+            form="NFC",
+        )
         return nfc_path
 
     return None
