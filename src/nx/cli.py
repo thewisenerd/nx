@@ -14,7 +14,7 @@ from .cli_helpers import (
     _print_torrent_info,
 )
 from .click_pathtype import PathType
-from .config import cache_dir, parse_config
+from .config import cache_dir, config_dir, parse_config
 from .import_torrents import (
     ImportResult,
     ImportStatus,
@@ -52,7 +52,14 @@ def _get_store_path(ctx: click.Context) -> Path | None:
     return store
 
 
-@click.group(invoke_without_command=True)
+@click.group(
+    invoke_without_command=True,
+    epilog=(
+        "Configuration is read from $XDG_CONFIG_HOME/nx/config.yaml "
+        "(default: ~/.config/nx/config.yaml). Run 'nx config --help' for "
+        "available settings."
+    ),
+)
 @click.option(
     "-C",
     "--root",
@@ -93,6 +100,31 @@ def nx(
 
     if ctx.invoked_subcommand is None:
         _show_entries(_get_store_path(ctx), max_announce_count, max_files)
+
+
+@nx.command(
+    help="show the global configuration path",
+    epilog="""\
+\b
+Available settings:
+  proxy       Proxy URL used for HTTP operations.
+  redactions  Tracker announce URL redaction rules.
+  secrets     Secret values associated with redaction rules (reserved).
+
+\b
+Example:
+  proxy: "socks5://10.64.0.1:1080"
+
+\b
+  redactions:
+    example:
+      pattern: '^https://tracker\\.example/(?P<key>[^/]+)/announce$'
+      template: 'https://tracker.example/{key}/announce'
+""",
+)
+def config() -> None:
+    """Describe global configuration."""
+    click.echo(config_dir / "config.yaml")
 
 
 def _show_entries(
