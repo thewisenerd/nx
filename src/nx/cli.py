@@ -1,5 +1,6 @@
 import time
 import urllib.parse
+from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -14,8 +15,14 @@ from .cli_helpers import (
 )
 from .click_pathtype import PathType
 from .config import cache_dir, parse_config
+from .import_torrents import (
+    ImportResult,
+    ImportStatus,
+    discover_torrent_files,
+    find_torrent_roots,
+)
 from .nx import Torrent, parse_torrent, parse_torrent_buf
-from .redact import build_redaction_rules, redact_torrent_buffer
+from .redact import RedactionRule, build_redaction_rules, redact_torrent_buffer
 from .store import DefaultStorePathName, Repo, TorrentEntry, load
 from .torrent_cache import TorrentCacheError, download_from_cache, fetch_torrent_url
 
@@ -31,6 +38,7 @@ ctx_keys = {
     "store_path": "store_path",
     "max_announce_count": "max_announce_count",
     "max_files": "max_files",
+    "root_explicit": "root_explicit",
 }
 
 
@@ -74,6 +82,7 @@ def nx(
     ctx.ensure_object(dict)
     root_path = Path(root).absolute() if root else Path.cwd()
     ctx.obj[ctx_keys["root_path"]] = root_path
+    ctx.obj[ctx_keys["root_explicit"]] = root is not None
     ctx.obj[ctx_keys["store_path"]] = root_path / DefaultStorePathName if root else None
     ctx.obj[ctx_keys["max_announce_count"]] = max_announce_count
     ctx.obj[ctx_keys["max_files"]] = max_files
@@ -353,6 +362,153 @@ def _parse_torrent(source: str) -> Torrent:
         torrent = parse_torrent(source_path.read_bytes())
 
     return torrent
+
+
+def _import_one(
+    source: Path,
+    library_root: Path,
+    redaction_rules: list[RedactionRule],
+    *,
+    dry_run: bool,
+) -> ImportResult:
+    try:
+        buffer = redact_torrent_buffer(source.read_bytes(), redaction_rules)
+        torrent = parse_torrent_buf(buffer)
+    except (OSError, RuntimeError, ValueError) as error:
+        return ImportResult(source, ImportStatus.INVALID, detail=str(error))
+
+    root_ref = torrent.strip_root()
+    if root_ref is None:
+        return ImportResult(source, ImportStatus.SINGLE_FILE, infohash=torrent.infohash)
+
+    candidates = find_torrent_roots(torrent, library_root)
+    if not candidates:
+        return ImportResult(source, ImportStatus.NOT_FOUND, infohash=torrent.infohash)
+    if len(candidates) > 1:
+        detail = ", ".join(str(path.relative_to(library_root)) for path in candidates)
+        return ImportResult(
+            source,
+            ImportStatus.AMBIGUOUS,
+            infohash=torrent.infohash,
+            detail=detail,
+        )
+
+    target = candidates[0]
+    try:
+        with Repo(target / DefaultStorePathName) as repo:
+            existing = repo.store.get_torrent(torrent.infohash)
+            if existing is not None and existing.nx["@internal"].strip_components != 1:
+                return ImportResult(
+                    source,
+                    ImportStatus.ERROR,
+                    target=target,
+                    infohash=torrent.infohash,
+                    detail="existing entry has incompatible strip-components",
+                )
+            if existing is not None and existing.nx["@internal"].ready:
+                return ImportResult(
+                    source,
+                    ImportStatus.EXISTING_READY,
+                    target=target,
+                    infohash=torrent.infohash,
+                )
+
+            if dry_run:
+                status = (
+                    ImportStatus.WOULD_VERIFY
+                    if existing is not None
+                    else ImportStatus.WOULD_IMPORT
+                )
+                return ImportResult(
+                    source, status, target=target, infohash=torrent.infohash
+                )
+
+            if not torrent.verify_pieces(target, strip_components=1):
+                return ImportResult(
+                    source,
+                    ImportStatus.VERIFICATION_FAILED,
+                    target=target,
+                    infohash=torrent.infohash,
+                )
+
+            entry = existing or TorrentEntry.from_torrent(torrent, strip_components=1)
+            entry.nx["@internal"].ready = True
+            entry.nx["@internal"].last_verified = int(time.time())
+            repo.store.upsert(entry)
+            status = (
+                ImportStatus.EXISTING_VERIFIED
+                if existing is not None
+                else ImportStatus.IMPORTED
+            )
+            return ImportResult(
+                source, status, target=target, infohash=torrent.infohash
+            )
+    except (OSError, ValueError) as error:
+        return ImportResult(
+            source,
+            ImportStatus.ERROR,
+            target=target,
+            infohash=torrent.infohash,
+            detail=str(error),
+        )
+
+
+def _print_import_results(results: list[ImportResult], library_root: Path) -> None:
+    for result in results:
+        target = (
+            str(result.target.relative_to(library_root))
+            if result.target is not None
+            else result.source.name
+        )
+        suffix = f" ({result.detail})" if result.detail else ""
+        click.echo(f"{result.status.value:<20} {target}{suffix}")
+
+    counts = Counter(result.status.value for result in results)
+    summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
+    click.echo(f"\n{summary or 'no torrents found'}")
+
+
+@nx.command(name="import", help="import matching multi-file torrents beneath the root")
+@click.argument(
+    "source",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--dry-run", is_flag=True, help="show matches without verifying or writing stores"
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="fail for single-file, unmatched, or ambiguous torrents",
+)
+@click.pass_context
+def import_torrents(
+    ctx: click.Context, source: Path, dry_run: bool, strict: bool
+) -> None:
+    if not ctx.obj[ctx_keys["root_explicit"]]:
+        raise click.UsageError("import requires an explicit root; use -C/--root")
+
+    library_root = _get_root_path(ctx)
+    redaction_rules = build_redaction_rules(parse_config().redactions)
+    results = [
+        _import_one(path, library_root, redaction_rules, dry_run=dry_run)
+        for path in discover_torrent_files(source)
+    ]
+    _print_import_results(results, library_root)
+
+    failures = {
+        ImportStatus.INVALID,
+        ImportStatus.ERROR,
+        ImportStatus.VERIFICATION_FAILED,
+    }
+    if strict:
+        failures |= {
+            ImportStatus.SINGLE_FILE,
+            ImportStatus.NOT_FOUND,
+            ImportStatus.AMBIGUOUS,
+        }
+    if any(result.status in failures for result in results):
+        ctx.exit(1)
 
 
 @nx.command(help="add a torrent file to the store")

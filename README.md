@@ -121,6 +121,31 @@ Options:
 
 `nx add "https://example.com/path.torrent"`
 
+### import
+
+`nx import` recursively discovers torrent files and imports matching multi-file
+torrents into stores beneath an explicit library root. It verifies content in
+place and does not create, move, rename, or delete payload files.
+
+Single-file torrents are reported and must still be organized manually before
+using `nx add --here`.
+
+```
+Usage: nx import [OPTIONS] SOURCE
+
+  import matching multi-file torrents beneath the root
+
+Options:
+  --dry-run  show matches without verifying or writing stores
+  --strict   fail for single-file, unmatched, or ambiguous torrents
+  --help     Show this message and exit.
+```
+
+```console
+nx -C /mnt/pool-00/media/video import /path/to/client/torrents --dry-run
+nx -C /mnt/pool-00/media/video import /path/to/client/torrents
+```
+
 ### verify
 
 ```

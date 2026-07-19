@@ -287,15 +287,19 @@ def _match_files(
 
         if resolved_path is None:
             missing.add(file.path)
+        elif not resolved_path.is_file():
+            error.add(file.path)
+            logger.error("expected a file", file=file)
+        elif resolved_path.stat().st_size != file.size:
+            error.add(file.path)
+            logger.error(
+                "file size mismatch",
+                file=file,
+                expected_size=file.size,
+                actual_size=resolved_path.stat().st_size,
+            )
         else:
-            if resolved_path.is_file():
-                found.add(file.path)
-            else:
-                error.add(file.path)
-                logger.error(
-                    "expected a file, not a file",
-                    file=file,
-                )
+            found.add(file.path)
 
     return MatchFilesResult(found=found, missing=missing, error=error)
 
