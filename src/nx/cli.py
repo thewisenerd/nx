@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import click
-import httpx
 import structlog
 from rich.console import Console
 
@@ -18,6 +17,7 @@ from .config import cache_dir, parse_config
 from .nx import Torrent, parse_torrent, parse_torrent_buf
 from .redact import build_redaction_rules, redact_torrent_buffer
 from .store import DefaultStorePathName, Repo, TorrentEntry, load
+from .torrent_cache import TorrentCacheError, download_from_cache, fetch_torrent_url
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -251,57 +251,20 @@ def lint(ctx: click.Context, depth: int) -> None:
         ctx.exit(1)
 
 
-_max_torrent_download_size = 16 * 1024 * 1024
-
-
 def _download_torrent_url(url: str, /, label: str) -> bytes:
-    config = parse_config()
-
-    logger.info("downloading torrent", url=url, proxy=config.proxy)
-
-    buffer = bytearray()
     try:
-        with httpx.stream(
-            "GET", url, proxy=config.proxy, follow_redirects=True
-        ) as response:
-            if response.status_code != 200:
-                click.echo(
-                    f"failed to download torrent for {label}: status_code={response.status_code}",
-                    err=True,
-                )
-                raise click.Abort()
-
-            for chunk in response.iter_bytes():
-                if not chunk:
-                    continue
-
-                if not buffer and chunk[0] != ord("d"):
-                    click.echo(f"invalid torrent file downloaded for {label}", err=True)
-                    raise click.Abort()
-
-                buffer.extend(chunk)
-                if len(buffer) > _max_torrent_download_size:
-                    click.echo(
-                        f"torrent file too large for {label}: max_size={_max_torrent_download_size}",
-                        err=True,
-                    )
-                    raise click.Abort()
-    except httpx.HTTPError as error:
+        return fetch_torrent_url(url)
+    except TorrentCacheError as error:
         click.echo(f"failed to download torrent for {label}: {error}", err=True)
         raise click.Abort() from error
 
-    if not buffer:
-        click.echo(f"empty torrent file downloaded for {label}", err=True)
-        raise click.Abort()
-
-    return bytes(buffer)
-
 
 def _download_magnet(infohash: str) -> bytes:
-    return _download_torrent_url(
-        f"https://itorrents.net/torrent/{infohash}.torrent",
-        label=f"magnet link: {infohash}",
-    )
+    try:
+        return download_from_cache(infohash, validate=parse_torrent_buf)
+    except TorrentCacheError as error:
+        click.echo(f"failed to download torrent for magnet link: {infohash}: {error}", err=True)
+        raise click.Abort() from error
 
 
 def _parse_sha1_infohash(value: str, label: str) -> str:
