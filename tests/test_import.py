@@ -29,6 +29,18 @@ def _torrent_buffer(root: str, files: dict[str, bytes]) -> bytes:
     return encoded
 
 
+def _single_file_torrent_buffer(name: str, content: bytes) -> bytes:
+    info = {
+        b"name": name.encode(),
+        b"piece length": 16 * 1024,
+        b"pieces": hashlib.sha1(content).digest(),
+        b"length": len(content),
+    }
+    encoded = lt.bencode({b"info": info})
+    assert isinstance(encoded, bytes)
+    return encoded
+
+
 def _write_payload(root: Path, files: dict[str, bytes]) -> None:
     for relative_path, content in files.items():
         path = root / relative_path
@@ -120,6 +132,130 @@ def test_import_reports_single_file_and_strict_fails(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "single-file" in result.output
+
+
+def test_import_organizes_single_file_at_any_depth(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    source = tmp_path / "torrents"
+    payload = library / "foo" / "bar" / "movie.mkv"
+    payload.parent.mkdir(parents=True)
+    payload.write_bytes(b"movie")
+    source.mkdir()
+    torrent_path = source / "movie.torrent"
+    torrent_path.write_bytes(_single_file_torrent_buffer("movie.mkv", b"movie"))
+
+    result = CliRunner().invoke(
+        nx,
+        [
+            "-C",
+            str(library),
+            "import",
+            str(source),
+            "--organize-single-files",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "organized" in result.output
+    target = library / "foo" / "bar" / "movie"
+    assert not payload.exists()
+    assert (target / "movie.mkv").read_bytes() == b"movie"
+    store = load(target / DefaultStorePathName, ignore_checksum=False)
+    entry = store.get_torrent(parse_torrent_buf(torrent_path.read_bytes()).infohash)
+    assert entry is not None
+    assert entry.nx["@internal"].strip_components == 0
+    assert entry.nx["@internal"].ready
+
+    repeated = CliRunner().invoke(nx, ["-C", str(library), "import", str(source)])
+    assert repeated.exit_code == 0, repeated.output
+    assert "existing-ready" in repeated.output
+
+
+def test_import_dry_run_reports_single_file_move(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    source = tmp_path / "torrents"
+    library.mkdir()
+    source.mkdir()
+    payload = library / "movie.mkv"
+    payload.write_bytes(b"movie")
+    (source / "movie.torrent").write_bytes(
+        _single_file_torrent_buffer("movie.mkv", b"movie")
+    )
+
+    result = CliRunner().invoke(
+        nx,
+        [
+            "-C",
+            str(library),
+            "import",
+            str(source),
+            "--organize-single-files",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "would-organize" in result.output
+    assert "move movie.mkv -> movie/movie.mkv" in result.output
+    assert payload.exists()
+    assert not (library / "movie").exists()
+
+
+def test_import_does_not_move_single_file_when_verification_fails(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "library"
+    source = tmp_path / "torrents"
+    library.mkdir()
+    source.mkdir()
+    payload = library / "movie.mkv"
+    payload.write_bytes(b"wrong")
+    (source / "movie.torrent").write_bytes(
+        _single_file_torrent_buffer("movie.mkv", b"movie")
+    )
+
+    result = CliRunner().invoke(
+        nx,
+        [
+            "-C",
+            str(library),
+            "import",
+            str(source),
+            "--organize-single-files",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "verification-failed" in result.output
+    assert payload.exists()
+    assert not (library / "movie").exists()
+
+
+def test_import_refuses_existing_single_file_target(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    source = tmp_path / "torrents"
+    library.mkdir()
+    source.mkdir()
+    (library / "movie.mkv").write_bytes(b"movie")
+    (library / "movie").mkdir()
+    (source / "movie.torrent").write_bytes(
+        _single_file_torrent_buffer("movie.mkv", b"movie")
+    )
+
+    result = CliRunner().invoke(
+        nx,
+        [
+            "-C",
+            str(library),
+            "import",
+            str(source),
+            "--organize-single-files",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "organization target already exists" in result.output
+    assert (library / "movie.mkv").exists()
 
 
 def test_import_requires_explicit_root(tmp_path: Path) -> None:

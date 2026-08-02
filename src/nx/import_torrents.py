@@ -12,6 +12,8 @@ class ImportStatus(StrEnum):
     EXISTING_VERIFIED = "existing-verified"
     WOULD_IMPORT = "would-import"
     WOULD_VERIFY = "would-verify"
+    WOULD_ORGANIZE = "would-organize"
+    ORGANIZED = "organized"
     VERIFICATION_FAILED = "verification-failed"
     SINGLE_FILE = "single-file"
     NOT_FOUND = "not-found"
@@ -31,6 +33,23 @@ class ImportResult:
 
 def discover_torrent_files(source: Path) -> list[Path]:
     return sorted(path for path in source.rglob("*.torrent") if path.is_file())
+
+
+def find_single_file_candidates(torrent: Torrent, library_root: Path) -> list[Path]:
+    if len(torrent.files) != 1:
+        return []
+
+    relative_path = torrent.files[0].path
+    if len(relative_path.parts) != 1:
+        return []
+
+    return sorted(
+        path
+        for path in library_root.rglob("*")
+        if path.name == relative_path.name
+        and path.is_file()
+        and torrent.matches(path.parent).ok
+    )
 
 
 def find_torrent_roots(torrent: Torrent, library_root: Path) -> list[Path]:

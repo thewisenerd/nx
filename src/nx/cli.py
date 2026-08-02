@@ -19,6 +19,7 @@ from .import_torrents import (
     ImportResult,
     ImportStatus,
     discover_torrent_files,
+    find_single_file_candidates,
     find_torrent_roots,
 )
 from .nx import Torrent, parse_torrent, parse_torrent_buf
@@ -396,40 +397,23 @@ def _parse_torrent(source: str) -> Torrent:
     return torrent
 
 
-def _import_one(
+def _import_at_target(
     source: Path,
-    library_root: Path,
-    redaction_rules: list[RedactionRule],
+    torrent: Torrent,
+    target: Path,
     *,
+    strip_components: int,
     dry_run: bool,
+    already_verified: bool = False,
+    imported_status: ImportStatus = ImportStatus.IMPORTED,
 ) -> ImportResult:
-    try:
-        buffer = redact_torrent_buffer(source.read_bytes(), redaction_rules)
-        torrent = parse_torrent_buf(buffer)
-    except (OSError, RuntimeError, ValueError) as error:
-        return ImportResult(source, ImportStatus.INVALID, detail=str(error))
-
-    root_ref = torrent.strip_root()
-    if root_ref is None:
-        return ImportResult(source, ImportStatus.SINGLE_FILE, infohash=torrent.infohash)
-
-    candidates = find_torrent_roots(torrent, library_root)
-    if not candidates:
-        return ImportResult(source, ImportStatus.NOT_FOUND, infohash=torrent.infohash)
-    if len(candidates) > 1:
-        detail = ", ".join(str(path.relative_to(library_root)) for path in candidates)
-        return ImportResult(
-            source,
-            ImportStatus.AMBIGUOUS,
-            infohash=torrent.infohash,
-            detail=detail,
-        )
-
-    target = candidates[0]
     try:
         with Repo(target / DefaultStorePathName) as repo:
             existing = repo.store.get_torrent(torrent.infohash)
-            if existing is not None and existing.nx["@internal"].strip_components != 1:
+            if (
+                existing is not None
+                and existing.nx["@internal"].strip_components != strip_components
+            ):
                 return ImportResult(
                     source,
                     ImportStatus.ERROR,
@@ -455,7 +439,9 @@ def _import_one(
                     source, status, target=target, infohash=torrent.infohash
                 )
 
-            if not torrent.verify_pieces(target, strip_components=1):
+            if not already_verified and not torrent.verify_pieces(
+                target, strip_components=strip_components
+            ):
                 return ImportResult(
                     source,
                     ImportStatus.VERIFICATION_FAILED,
@@ -463,14 +449,16 @@ def _import_one(
                     infohash=torrent.infohash,
                 )
 
-            entry = existing or TorrentEntry.from_torrent(torrent, strip_components=1)
+            entry = existing or TorrentEntry.from_torrent(
+                torrent, strip_components=strip_components
+            )
             entry.nx["@internal"].ready = True
             entry.nx["@internal"].last_verified = int(time.time())
             repo.store.upsert(entry)
             status = (
                 ImportStatus.EXISTING_VERIFIED
                 if existing is not None
-                else ImportStatus.IMPORTED
+                else imported_status
             )
             return ImportResult(
                 source, status, target=target, infohash=torrent.infohash
@@ -483,6 +471,163 @@ def _import_one(
             infohash=torrent.infohash,
             detail=str(error),
         )
+
+
+def _import_single_file(
+    source: Path,
+    torrent: Torrent,
+    library_root: Path,
+    *,
+    dry_run: bool,
+    organize: bool,
+) -> ImportResult:
+    candidates = find_single_file_candidates(torrent, library_root)
+    if not candidates:
+        status = ImportStatus.NOT_FOUND if organize else ImportStatus.SINGLE_FILE
+        return ImportResult(source, status, infohash=torrent.infohash)
+    if len(candidates) > 1:
+        detail = ", ".join(str(path.relative_to(library_root)) for path in candidates)
+        return ImportResult(
+            source,
+            ImportStatus.AMBIGUOUS,
+            infohash=torrent.infohash,
+            detail=detail,
+        )
+
+    candidate = candidates[0]
+    directory_name = candidate.stem
+    if candidate.parent.name == directory_name:
+        return _import_at_target(
+            source,
+            torrent,
+            candidate.parent,
+            strip_components=0,
+            dry_run=dry_run,
+        )
+
+    if not organize:
+        return ImportResult(
+            source,
+            ImportStatus.SINGLE_FILE,
+            target=candidate,
+            infohash=torrent.infohash,
+        )
+
+    target = candidate.parent / directory_name
+    if target == candidate:
+        return ImportResult(
+            source,
+            ImportStatus.ERROR,
+            target=candidate,
+            infohash=torrent.infohash,
+            detail="single-file payload has no removable extension",
+        )
+    if target.exists():
+        return ImportResult(
+            source,
+            ImportStatus.ERROR,
+            target=target,
+            infohash=torrent.infohash,
+            detail="organization target already exists",
+        )
+
+    relative_candidate = candidate.relative_to(library_root)
+    relative_destination = (target / candidate.name).relative_to(library_root)
+    move_detail = f"move {relative_candidate} -> {relative_destination}"
+    if dry_run:
+        return ImportResult(
+            source,
+            ImportStatus.WOULD_ORGANIZE,
+            target=target,
+            infohash=torrent.infohash,
+            detail=move_detail,
+        )
+
+    if not torrent.verify_pieces(candidate.parent):
+        return ImportResult(
+            source,
+            ImportStatus.VERIFICATION_FAILED,
+            target=candidate,
+            infohash=torrent.infohash,
+        )
+
+    try:
+        target.mkdir()
+    except OSError as error:
+        return ImportResult(
+            source,
+            ImportStatus.ERROR,
+            target=target,
+            infohash=torrent.infohash,
+            detail=str(error),
+        )
+
+    try:
+        candidate.rename(target / candidate.name)
+    except OSError as error:
+        target.rmdir()
+        return ImportResult(
+            source,
+            ImportStatus.ERROR,
+            target=target,
+            infohash=torrent.infohash,
+            detail=str(error),
+        )
+
+    return _import_at_target(
+        source,
+        torrent,
+        target,
+        strip_components=0,
+        dry_run=False,
+        already_verified=True,
+        imported_status=ImportStatus.ORGANIZED,
+    )
+
+
+def _import_one(
+    source: Path,
+    library_root: Path,
+    redaction_rules: list[RedactionRule],
+    *,
+    dry_run: bool,
+    organize_single_files: bool,
+) -> ImportResult:
+    try:
+        buffer = redact_torrent_buffer(source.read_bytes(), redaction_rules)
+        torrent = parse_torrent_buf(buffer)
+    except (OSError, RuntimeError, ValueError) as error:
+        return ImportResult(source, ImportStatus.INVALID, detail=str(error))
+
+    root_ref = torrent.strip_root()
+    if root_ref is None:
+        return _import_single_file(
+            source,
+            torrent,
+            library_root,
+            dry_run=dry_run,
+            organize=organize_single_files,
+        )
+
+    candidates = find_torrent_roots(torrent, library_root)
+    if not candidates:
+        return ImportResult(source, ImportStatus.NOT_FOUND, infohash=torrent.infohash)
+    if len(candidates) > 1:
+        detail = ", ".join(str(path.relative_to(library_root)) for path in candidates)
+        return ImportResult(
+            source,
+            ImportStatus.AMBIGUOUS,
+            infohash=torrent.infohash,
+            detail=detail,
+        )
+
+    return _import_at_target(
+        source,
+        torrent,
+        candidates[0],
+        strip_components=1,
+        dry_run=dry_run,
+    )
 
 
 def _print_import_results(results: list[ImportResult], library_root: Path) -> None:
@@ -500,7 +645,7 @@ def _print_import_results(results: list[ImportResult], library_root: Path) -> No
     click.echo(f"\n{summary or 'no torrents found'}")
 
 
-@nx.command(name="import", help="import matching multi-file torrents beneath the root")
+@nx.command(name="import", help="import matching torrents beneath the root")
 @click.argument(
     "source",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
@@ -509,13 +654,22 @@ def _print_import_results(results: list[ImportResult], library_root: Path) -> No
     "--dry-run", is_flag=True, help="show matches without verifying or writing stores"
 )
 @click.option(
+    "--organize-single-files",
+    is_flag=True,
+    help="move single-file payloads into directories before importing",
+)
+@click.option(
     "--strict",
     is_flag=True,
     help="fail for single-file, unmatched, or ambiguous torrents",
 )
 @click.pass_context
 def import_torrents(
-    ctx: click.Context, source: Path, dry_run: bool, strict: bool
+    ctx: click.Context,
+    source: Path,
+    dry_run: bool,
+    organize_single_files: bool,
+    strict: bool,
 ) -> None:
     if not ctx.obj[ctx_keys["root_explicit"]]:
         raise click.UsageError("import requires an explicit root; use -C/--root")
@@ -523,7 +677,13 @@ def import_torrents(
     library_root = _get_root_path(ctx)
     redaction_rules = build_redaction_rules(parse_config().redactions)
     results = [
-        _import_one(path, library_root, redaction_rules, dry_run=dry_run)
+        _import_one(
+            path,
+            library_root,
+            redaction_rules,
+            dry_run=dry_run,
+            organize_single_files=organize_single_files,
+        )
         for path in discover_torrent_files(source)
     ]
     _print_import_results(results, library_root)
