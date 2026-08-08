@@ -69,6 +69,23 @@ def test_finds_unique_multifile_root_by_layout_and_size(tmp_path: Path) -> None:
     assert find_torrent_roots(torrent, tmp_path) == [match]
 
 
+def test_add_rejects_torrent_with_missing_files(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    torrent_path = tmp_path / "release.torrent"
+    torrent_path.write_bytes(_single_file_torrent_buffer("missing.mkv", b"data"))
+
+    result = CliRunner().invoke(
+        nx, ["-C", str(target), "add", "--here", str(torrent_path)]
+    )
+
+    assert result.exit_code != 0
+    assert "missing: 1 files" in result.output
+    assert "  missing.mkv" in result.output
+    assert "added torrent:" not in result.output
+    assert not (target / DefaultStorePathName).exists()
+
+
 def test_import_verifies_and_writes_matching_torrent(tmp_path: Path) -> None:
     library = tmp_path / "library"
     source = tmp_path / "torrents"

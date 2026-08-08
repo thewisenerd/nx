@@ -22,7 +22,7 @@ from .import_torrents import (
     find_single_file_candidates,
     find_torrent_roots,
 )
-from .nx import Torrent, parse_torrent, parse_torrent_buf
+from .nx import MatchFilesResult, Torrent, parse_torrent, parse_torrent_buf
 from .redact import RedactionRule, build_redaction_rules, redact_torrent_buffer
 from .store import DefaultStorePathName, Repo, TorrentEntry, load
 from .torrent_cache import TorrentCacheError, download_from_cache, fetch_torrent_url
@@ -778,13 +778,16 @@ def add(
         matches = torrent.matches(
             repo.save_path, strip_components=strip_components or 0
         )
-        if matches.ok:
-            verified = torrent.verify_pieces(
-                repo.save_path, strip_components=strip_components or 0
-            )
-            log.info("verified", verified=verified)
-            entry.nx["@internal"].ready = verified
-            entry.nx["@internal"].last_verified = int(time.time())
+        if not matches.ok:
+            _print_file_match_errors(entry.id, matches)
+            raise click.Abort()
+
+        verified = torrent.verify_pieces(
+            repo.save_path, strip_components=strip_components or 0
+        )
+        log.info("verified", verified=verified)
+        entry.nx["@internal"].ready = verified
+        entry.nx["@internal"].last_verified = int(time.time())
 
         repo.store.upsert(entry)
         click.echo(f"added torrent: {torrent.infohash}")
@@ -830,6 +833,16 @@ def _verify_all_torrents(repo: Repo) -> None:
         _verify_single_torrent(repo, entry)
 
 
+def _print_file_match_errors(infohash: str, matches: MatchFilesResult, /) -> None:
+    click.echo(f"files missing or invalid for {infohash[:8]}", err=True)
+    if matches.missing:
+        click.echo(f"missing: {len(matches.missing)} files", err=True)
+        for path in sorted(matches.missing):
+            click.echo(f"  {path}", err=True)
+    if matches.error:
+        click.echo(f"errors: {len(matches.error)} files", err=True)
+
+
 def _verify_single_torrent(repo: Repo, entry: TorrentEntry) -> None:
     torrent = parse_torrent_buf(entry.buffer())
 
@@ -840,13 +853,7 @@ def _verify_single_torrent(repo: Repo, entry: TorrentEntry) -> None:
     matches = torrent.matches(repo.save_path, strip_components=strip_components)
 
     if not matches.ok:
-        click.echo(f"files missing or invalid for {entry.id[:8]}", err=True)
-        if matches.missing:
-            click.echo(f"missing: {len(matches.missing)} files", err=True)
-            for path in matches.missing:
-                click.echo(f"  {path}", err=True)
-        if matches.error:
-            click.echo(f"errors: {len(matches.error)} files", err=True)
+        _print_file_match_errors(entry.id, matches)
         return
 
     verified = torrent.verify_pieces(repo.save_path, strip_components=strip_components)
