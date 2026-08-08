@@ -303,7 +303,7 @@ def _download_torrent_url(url: str, /, label: str) -> bytes:
 
 def _download_magnet(infohash: str) -> bytes:
     try:
-        return download_from_cache(infohash, validate=parse_torrent_buf)
+        return download_from_cache(infohash)
     except TorrentCacheError as error:
         click.echo(
             f"failed to download torrent for magnet link: {infohash}: {error}", err=True

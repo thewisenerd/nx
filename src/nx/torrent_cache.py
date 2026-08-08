@@ -1,6 +1,5 @@
 import re
 import urllib.parse
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -8,6 +7,7 @@ import httpx
 import structlog
 
 from .config import parse_config
+from .nx import parse_torrent_buf
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -150,16 +150,19 @@ def default_torrent_cache_sources() -> list[TorrentCacheSource]:
     ]
 
 
-def download_from_cache(
-    infohash: str, /, *, validate: Callable[[bytes], object] | None = None
-) -> bytes:
+def download_from_cache(infohash: str, /) -> bytes:
+    expected_infohash = infohash.upper()
     failures: list[str] = []
 
     for source in default_torrent_cache_sources():
         try:
-            buffer = source.fetch(infohash)
-            if validate is not None:
-                validate(buffer)
+            buffer = source.fetch(expected_infohash)
+            actual_infohash = parse_torrent_buf(buffer).infohash
+            if actual_infohash != expected_infohash:
+                raise TorrentCacheError(
+                    "torrent infohash mismatch: "
+                    f"expected={expected_infohash} actual={actual_infohash}"
+                )
             return buffer
         except (TorrentCacheError, RuntimeError, ValueError) as error:
             failures.append(f"{source.name}: {error}")

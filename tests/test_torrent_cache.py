@@ -1,5 +1,9 @@
+import hashlib
+
+import libtorrent as lt
 import pytest
 
+from nx.nx import parse_torrent_buf
 from nx.torrent_cache import (
     TorrentCacheError,
     build_torrage_download_url,
@@ -9,6 +13,21 @@ from nx.torrent_cache import (
     extract_torrage_token,
     transform_torrage_ttl,
 )
+
+
+def _torrent_buffer(name: str, content: bytes) -> bytes:
+    encoded = lt.bencode(
+        {
+            b"info": {
+                b"name": name.encode(),
+                b"piece length": 16 * 1024,
+                b"pieces": hashlib.sha1(content).digest(),
+                b"length": len(content),
+            }
+        }
+    )
+    assert isinstance(encoded, bytes)
+    return encoded
 
 
 def test_extract_torrage_token_allows_linebreak_before_closing_paren() -> None:
@@ -50,7 +69,7 @@ def test_build_torrage_download_url_encodes_query() -> None:
     )
 
 
-def test_download_from_cache_tries_next_source_when_validation_fails(
+def test_download_from_cache_rejects_torrent_with_wrong_infohash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Source:
@@ -61,13 +80,15 @@ def test_download_from_cache_tries_next_source_when_validation_fails(
         def fetch(self, infohash: str) -> bytes:
             return self.buffer
 
+    poisoned_buffer = _torrent_buffer("poisoned", b"bad")
+    expected_buffer = _torrent_buffer("expected", b"good")
+    expected_infohash = parse_torrent_buf(expected_buffer).infohash
     monkeypatch.setattr(
         "nx.torrent_cache.default_torrent_cache_sources",
-        lambda: [Source("bad", b"d3:bad"), Source("good", b"d4:good")],
+        lambda: [
+            Source("poisoned", poisoned_buffer),
+            Source("expected", expected_buffer),
+        ],
     )
 
-    def validate(buffer: bytes) -> None:
-        if buffer == b"d3:bad":
-            raise RuntimeError("unexpected end of file")
-
-    assert download_from_cache("ABC", validate=validate) == b"d4:good"
+    assert download_from_cache(expected_infohash) == expected_buffer
