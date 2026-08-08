@@ -11,6 +11,7 @@ from .nx import File
 class TreeNode:
     """Represents a directory node in the file tree structure"""
 
+    size: int = 0
     files: list[tuple[str, File]] = field(default_factory=list)
     subdirs: dict[str, TreeNode] = field(default_factory=dict)
 
@@ -25,17 +26,37 @@ class TreeNode:
         return self.subdirs[name]
 
 
-def _add_dir_contents_to_tree(parent_branch: Tree, tree_node: TreeNode) -> None:
-    """Add directory contents to tree branch"""
+def _build_file_tree(files: list[File]) -> TreeNode:
+    root = TreeNode()
+
+    for file in files:
+        current = root
+        current.size += file.size
+
+        for part in file.path.parts[:-1]:
+            current = current.get_or_create_subdir(part)
+            current.size += file.size
+
+        current.add_file(file.path.parts[-1], file)
+
+    return root
+
+
+def _add_dir_contents_to_tree(
+    parent_branch: Tree, visible_node: TreeNode, complete_node: TreeNode
+) -> None:
+    """Add visible directory contents with complete directory sizes"""
     # Add directories first (sorted)
-    for dir_name in sorted(tree_node.subdirs.keys()):
-        subtree = tree_node.subdirs[dir_name]
-        dir_size = _calculate_dir_size(subtree)
-        dir_branch = parent_branch.add(f"{dir_name}/ ({_format_size(dir_size)})")
-        _add_dir_contents_to_tree(dir_branch, subtree)
+    for dir_name in sorted(visible_node.subdirs):
+        visible_subtree = visible_node.subdirs[dir_name]
+        complete_subtree = complete_node.subdirs[dir_name]
+        dir_branch = parent_branch.add(
+            f"{dir_name}/ ({_format_size(complete_subtree.size)})"
+        )
+        _add_dir_contents_to_tree(dir_branch, visible_subtree, complete_subtree)
 
     # Add files second (sorted)
-    for filename, file in sorted(tree_node.files):
+    for filename, file in sorted(visible_node.files):
         parent_branch.add(f"{filename} ({_format_size(file.size)})")
 
 
@@ -46,36 +67,22 @@ def _add_files_to_tree(
     if not files:
         return
 
-    # Apply file limit if specified
-    files_to_show = files
-    if max_files > 0:
-        files_to_show = files[:max_files]
-
-    # Group files by their directory structure
-    root = TreeNode()
-    single_files = []
-
-    for file in files_to_show:
-        if len(file.path.parts) == 1:
-            single_files.append(file)
-        else:
-            current = root
-            for part in file.path.parts[:-1]:
-                current = current.get_or_create_subdir(part)
-
-            # Store the file at the leaf
-            current.add_file(file.path.parts[-1], file)
+    complete_tree = _build_file_tree(files)
+    visible_files = files[:max_files] if max_files > 0 else files
+    visible_tree = _build_file_tree(visible_files)
 
     # Add single files first
-    for file in single_files:
-        parent_branch.add(f"{file.path.name} ({_format_size(file.size)})")
+    for filename, file in visible_tree.files:
+        parent_branch.add(f"{filename} ({_format_size(file.size)})")
 
     # Add directories
-    for dir_name in sorted(root.subdirs.keys()):
-        subdir = root.subdirs[dir_name]
-        dir_size = _calculate_dir_size(subdir)
-        dir_branch = parent_branch.add(f"{dir_name}/ ({_format_size(dir_size)})")
-        _add_dir_contents_to_tree(dir_branch, subdir)
+    for dir_name in sorted(visible_tree.subdirs):
+        visible_subtree = visible_tree.subdirs[dir_name]
+        complete_subtree = complete_tree.subdirs[dir_name]
+        dir_branch = parent_branch.add(
+            f"{dir_name}/ ({_format_size(complete_subtree.size)})"
+        )
+        _add_dir_contents_to_tree(dir_branch, visible_subtree, complete_subtree)
 
     # Show "... and N more" if files were truncated
     if 0 < max_files < len(files):
@@ -99,16 +106,3 @@ def _format_size(size_bytes: int) -> str:
     if size == int(size):
         return f"{int(size)} {units[unit_idx]}"
     return f"{size:.2f} {units[unit_idx]}"
-
-
-def _calculate_dir_size(tree_node: TreeNode) -> int:
-    """Calculate total size of directory"""
-    total = 0
-
-    for _, file in tree_node.files:
-        total += file.size
-
-    for subtree in tree_node.subdirs.values():
-        total += _calculate_dir_size(subtree)
-
-    return total
