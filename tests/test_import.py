@@ -86,6 +86,19 @@ def test_add_rejects_torrent_with_missing_files(tmp_path: Path) -> None:
     assert not (target / DefaultStorePathName).exists()
 
 
+def test_add_rejects_multifile_torrent_with_missing_root(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    library.mkdir()
+    torrent_path = tmp_path / "release.torrent"
+    torrent_path.write_bytes(_torrent_buffer("Release", {"video.mkv": b"data"}))
+
+    result = CliRunner().invoke(nx, ["-C", str(library), "add", str(torrent_path)])
+
+    assert result.exit_code != 0
+    assert "root directory does not exist" in result.output
+    assert not (library / "Release").exists()
+
+
 def test_import_verifies_and_writes_matching_torrent(tmp_path: Path) -> None:
     library = tmp_path / "library"
     source = tmp_path / "torrents"

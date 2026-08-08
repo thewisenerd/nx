@@ -216,21 +216,7 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
 
         return new_store_path
 
-    # case 3: root_ref directory doesn't exist, create it
-    if candidate.parent.exists() and candidate.parent.is_dir():
-        console.print("creating directory ", end="")
-        console.print(
-            candidate.name, style="yellow", markup=False, highlight=False, end=""
-        )
-        console.print("")
-
-        candidate.mkdir(exist_ok=True)
-
-        new_store_path = candidate / DefaultStorePathName
-        log.debug("creating root-ref", new_store_path=new_store_path)
-        return new_store_path
-
-    click.echo(f"cannot resolve root directory: '{candidate}'", err=True)
+    click.echo(f"root directory does not exist: '{candidate}'", err=True)
     raise click.Abort()
 
 
