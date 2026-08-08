@@ -2,6 +2,7 @@ import base64
 from datetime import datetime
 
 from rich.console import Console
+from rich.markup import escape
 from rich.tree import Tree
 
 from .cli_helpers_tree import _add_files_to_tree, _format_size
@@ -56,7 +57,9 @@ def _add_torrent_info_to_tree(
             trackers_to_show = torrent.trackers[:max_announce_count]
 
         for tracker in trackers_to_show:
-            announce_branch.add(redact_announce_url(tracker.url, redaction_rules))
+            announce_branch.add(
+                escape(redact_announce_url(tracker.url, redaction_rules))
+            )
 
         if 0 < max_announce_count < len(torrent.trackers):
             remaining = len(torrent.trackers) - max_announce_count
@@ -91,7 +94,7 @@ def _print_torrent_entry(
         tree = Tree(f"[bold grey]{entry.id}[/bold grey]")
 
     # Torrent section
-    torrent_branch = tree.add(f"[green]torrent:[/green] {torrent.info.name()}")
+    torrent_branch = tree.add(f"[green]torrent:[/green] {escape(torrent.info.name())}")
 
     # Add common torrent info
     _add_torrent_info_to_tree(torrent_branch, torrent, max_announce_count, max_files)
@@ -118,7 +121,7 @@ def _print_torrent_info(
     console: Console, torrent: Torrent, max_announce_count: int = 5, max_files: int = 26
 ) -> None:
     """Print torrent info without store metadata"""
-    tree = Tree(f"[green]torrent:[/green] {torrent.info.name()}")
+    tree = Tree(f"[green]torrent:[/green] {escape(torrent.info.name())}")
 
     # Basic info
     tree.add(f"[cyan]infohash:[/cyan] {torrent.infohash}")

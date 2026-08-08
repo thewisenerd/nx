@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from rich.markup import escape
 from rich.tree import Tree
 
 from .nx import File
@@ -51,13 +52,13 @@ def _add_dir_contents_to_tree(
         visible_subtree = visible_node.subdirs[dir_name]
         complete_subtree = complete_node.subdirs[dir_name]
         dir_branch = parent_branch.add(
-            f"{dir_name}/ ({_format_size(complete_subtree.size)})"
+            f"{escape(dir_name)}/ ({_format_size(complete_subtree.size)})"
         )
         _add_dir_contents_to_tree(dir_branch, visible_subtree, complete_subtree)
 
     # Add files second (sorted)
     for filename, file in sorted(visible_node.files):
-        parent_branch.add(f"{filename} ({_format_size(file.size)})")
+        parent_branch.add(f"{escape(filename)} ({_format_size(file.size)})")
 
 
 def _add_files_to_tree(
@@ -73,14 +74,14 @@ def _add_files_to_tree(
 
     # Add single files first
     for filename, file in visible_tree.files:
-        parent_branch.add(f"{filename} ({_format_size(file.size)})")
+        parent_branch.add(f"{escape(filename)} ({_format_size(file.size)})")
 
     # Add directories
     for dir_name in sorted(visible_tree.subdirs):
         visible_subtree = visible_tree.subdirs[dir_name]
         complete_subtree = complete_tree.subdirs[dir_name]
         dir_branch = parent_branch.add(
-            f"{dir_name}/ ({_format_size(complete_subtree.size)})"
+            f"{escape(dir_name)}/ ({_format_size(complete_subtree.size)})"
         )
         _add_dir_contents_to_tree(dir_branch, visible_subtree, complete_subtree)
 
