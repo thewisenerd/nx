@@ -211,9 +211,9 @@ def parse_torrent_buf(buffer: bytes) -> Torrent:
 def parse_torrent(buffer: bytes) -> Torrent:
     log = logger.bind(method="parse_torrent")
     torrent = parse_torrent_buf(buffer)
-    log.info("parsed", name=torrent.info.name())
-    log.info("parsed files", files=torrent.files)
-    log.info("parsed trackers", trackers=torrent.trackers)
+    log.debug("parsed", name=torrent.info.name())
+    log.debug("parsed files", files=torrent.files)
+    log.debug("parsed trackers", trackers=torrent.trackers)
 
     return torrent
 
@@ -311,7 +311,7 @@ def verify_pieces(
     strip_components: int = 0,
 ) -> bool:
     log = logger.bind(method="verify_pieces", id=torrent.infohash)
-    log.info("invoked", save_path=save_path)
+    log.debug("invoked", save_path=save_path)
 
     match_files = torrent.matches(save_path, strip_components=strip_components)
     if not match_files.ok:

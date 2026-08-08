@@ -93,7 +93,7 @@ def fetch_text(url: str, /) -> str:
 def fetch_text_with_client(
     client: httpx.Client, url: str, /, *, referer: str | None = None
 ) -> str:
-    logger.info("downloading torrent metadata", url=url)
+    logger.debug("downloading torrent metadata", url=url)
     headers = {"Referer": referer} if referer is not None else None
     response = client.get(url, headers=headers)
     if response.status_code != 200:
@@ -115,7 +115,7 @@ def fetch_torrent_url(url: str, /) -> bytes:
 def fetch_torrent_url_with_client(
     client: httpx.Client, url: str, /, *, referer: str | None = None
 ) -> bytes:
-    logger.info("downloading torrent", url=url)
+    logger.debug("downloading torrent", url=url)
 
     headers = {"Referer": referer} if referer is not None else None
     buffer = bytearray()
@@ -166,7 +166,7 @@ def download_from_cache(infohash: str, /) -> bytes:
             return buffer
         except (TorrentCacheError, RuntimeError, ValueError) as error:
             failures.append(f"{source.name}: {error}")
-            logger.info(
+            logger.debug(
                 "failed to download torrent from cache",
                 source=source.name,
                 error=str(error),

@@ -1,3 +1,4 @@
+import logging
 import time
 import urllib.parse
 from collections import Counter
@@ -33,6 +34,15 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 _default_store_path = Path(DefaultStorePathName).absolute()
 
 console = Console()
+
+log_levels = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
 
 ctx_keys = {
     "root_path": "root_path",
@@ -83,10 +93,33 @@ def _get_store_path(ctx: click.Context) -> Path | None:
     show_default=True,
     help="maximum number of files to show per torrent (0 = show all)",
 )
+@click.option(
+    "--log-level",
+    type=click.Choice(log_levels, case_sensitive=False),
+    default="WARN",
+    show_default=True,
+    help="minimum log level",
+)
+@click.option(
+    "-X",
+    "--debug",
+    is_flag=True,
+    help="enable debug logging (overrides --log-level)",
+)
 @click.pass_context
 def nx(
-    ctx: click.Context, root: str | None, max_announce_count: int, max_files: int
+    ctx: click.Context,
+    root: str | None,
+    max_announce_count: int,
+    max_files: int,
+    log_level: str,
+    debug: bool,
 ) -> None:
+    effective_log_level = logging.DEBUG if debug else log_levels[log_level.upper()]
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(effective_log_level)
+    )
+
     ctx.ensure_object(dict)
     root_path = Path(root).absolute() if root else Path.cwd()
     ctx.obj[ctx_keys["root_path"]] = root_path
@@ -156,11 +189,11 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
     log = logger.bind(method="_resolve_root", id=torrent.infohash, root_ref=root_ref)
 
     search = store_path.parent if store_path else _default_store_path.parent
-    log.info("invoked", search=search)
+    log.debug("invoked", search=search)
 
     # case 1: we are "in" the root_ref directory
     if search.parts[-1] == root_ref:
-        log.info("in root-ref")
+        log.debug("in root-ref")
         return store_path if store_path else _default_store_path
 
     # case 2: we are "above" the root_ref directory
@@ -173,7 +206,7 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
             raise click.Abort()
 
         new_store_path = candidate / DefaultStorePathName
-        log.info("above root-ref", new_store_path=new_store_path)
+        log.debug("above root-ref", new_store_path=new_store_path)
 
         console.print("switching to directory ", end="")
         console.print(
@@ -194,7 +227,7 @@ def _resolve_root(torrent: Torrent, store_path: Path | None, root_ref: str) -> P
         candidate.mkdir(exist_ok=True)
 
         new_store_path = candidate / DefaultStorePathName
-        log.info("creating root-ref", new_store_path=new_store_path)
+        log.debug("creating root-ref", new_store_path=new_store_path)
         return new_store_path
 
     click.echo(f"cannot resolve root directory: '{candidate}'", err=True)
@@ -724,7 +757,7 @@ def add(
         source=source,
         here=here,
     )
-    log.info("invoked")
+    log.debug("invoked")
 
     torrent = _parse_torrent(source)
     config = parse_config()
@@ -741,7 +774,7 @@ def add(
 
     if here:
         # user says "trust me, store goes here"
-        log.info("using current directory as root", is_multi_file=is_multi_file)
+        log.debug("using current directory as root", is_multi_file=is_multi_file)
         if store_path is None:
             store_path = _default_store_path
     else:
@@ -774,7 +807,7 @@ def add(
                 click.echo(f"torrent already exists and is ready: {entry.id}", err=True)
                 raise click.Abort()
 
-        log.info("adding new torrent", id=entry.id)
+        log.debug("adding new torrent", id=entry.id)
         matches = torrent.matches(
             repo.save_path, strip_components=strip_components or 0
         )
@@ -800,7 +833,7 @@ def verify(ctx: click.Context, identifier: str | None) -> None:
     """verify torrents (all if no identifier given)"""
     store_path: Path | None = _get_store_path(ctx)
     log = logger.bind(method="verify", store=store_path, identifier=identifier)
-    log.info("invoked")
+    log.debug("invoked")
 
     resolved_store_path: Path = store_path if store_path else _default_store_path
     with Repo(resolved_store_path) as repo:
